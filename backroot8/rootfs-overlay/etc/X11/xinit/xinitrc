@@ -9,8 +9,8 @@ xsetroot -solid "#1e2030"
 /usr/local/bin/br8-panel &
 PANEL_PID=$!
 
-# Default terminal at root
-xterm -fa Monospace -fs 11 -bg "#1a1a22" -fg "#e8e8ec" &
+# Default terminal at root (xterm)
+xterm -fa Monospace -fs 11 -bg "#1a1a22" -fg "#e8e8ec" -title root@Backroot8 -e /bin/bash -l &
 
 # Window manager (exec keeps the X session alive)
 exec /usr/local/bin/br8-wm

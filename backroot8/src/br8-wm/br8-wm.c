@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <signal.h>
 
 #define TITLE_H 28
 #define BTN_W 22
@@ -99,15 +100,29 @@ static void draw_title(Client *c, const char *name) {
 }
 
 static void spawn_terminal_root(void) {
-    if (fork() == 0) {
-        setsid();
-        setenv("HOME", "/root", 1);
-        setenv("DISPLAY", ":0", 1);
-        execl("/usr/bin/xterm", "xterm", "-fa", "Monospace", "-fs", "11",
-            "-bg", "#1a1a22", "-fg", "#e8e8ec", NULL);
-        execl("/usr/bin/Xorg", "Xorg", NULL);
+    pid_t pid = fork();
+    if (pid < 0)
+        return;
+    if (pid > 0)
+        return;
+    if (chdir("/") != 0)
         _exit(1);
-    }
+    setenv("HOME", "/root", 1);
+    setenv("DISPLAY", ":0", 1);
+    setenv("TERM", "xterm-256color", 1);
+    /* xterm: standard OSS X11 terminal (reliable in minimal Arch images) */
+    execl("/usr/bin/xterm", "xterm",
+        "-fa", "Monospace", "-fs", "11",
+        "-bg", "#1a1a22", "-fg", "#e8e8ec",
+        "-title", "root@Backroot8",
+        "-e", "/bin/bash", "-l",
+        NULL);
+    /* fallback: xfce4-terminal if installed and libraries match */
+    execl("/usr/bin/xfce4-terminal", "xfce4-terminal",
+        "--working-directory=/",
+        "--title=root@Backroot8",
+        NULL);
+    _exit(1);
 }
 
 static void hide_menu(void) {
@@ -282,6 +297,7 @@ int main(void) {
     XSelectInput(dpy, root,
         SubstructureRedirectMask | SubstructureNotifyMask | ButtonPressMask);
     XSetErrorHandler(NULL);
+    signal(SIGCHLD, SIG_IGN);
 
     create_menu();
 
@@ -297,6 +313,12 @@ int main(void) {
         else if (ev.type == DestroyNotify)
             handle_destroy(&ev.xdestroywindow);
         else if (ev.type == ButtonPress) {
+            /* Menu click must be handled before hide_menu() */
+            if (menu_visible && ev.xbutton.window == menu_win) {
+                hide_menu();
+                spawn_terminal_root();
+                continue;
+            }
             if (ev.xbutton.button == Button3 && ev.xbutton.window == root) {
                 show_menu(ev.xbutton.x_root, ev.xbutton.y_root);
                 continue;
@@ -338,10 +360,6 @@ int main(void) {
                         draw_close_button(c);
                 }
             }
-        } else if (ev.type == ButtonPress && menu_visible &&
-                   (ev.xbutton.window == menu_win || ev.xbutton.subwindow == menu_win)) {
-            hide_menu();
-            spawn_terminal_root();
         }
     }
     return 0;

@@ -87,7 +87,7 @@ pacman -S --noconfirm --needed \
     linux linux-firmware \
     base base-devel \
     xorg-server xorg-xinit xorg-xrandr \
-    xterm nettle xorg-fonts-misc \
+    xfce4-terminal xterm nettle xorg-fonts-misc \
     systemd-sysvcompat \
     sudo networkmanager \
     mkinitcpio grub efibootmgr \
@@ -135,6 +135,8 @@ menuentry "Backroot 8" {
     initrd /boot/initramfs-linux.img
 }
 GRUB
+# Sync all packages so terminals match current nettle/gnutls SONAMEs
+pacman -Syu --noconfirm
 CHROOT
 
 log "Installing Backroot 8 desktop..."
