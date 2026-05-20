@@ -312,9 +312,18 @@ static void tag_frame(Client *c) {
 }
 
 static void restore_client(Client *c) {
-    if (!c || c->mapped)
+    XWindowAttributes wa;
+
+    if (!c)
         return;
-    map_client(c);
+    if (!XGetWindowAttributes(dpy, c->frame, &wa)) {
+        map_client(c);
+        return;
+    }
+    if (wa.map_state == IsUnmapped || !c->mapped)
+        map_client(c);
+    XRaiseWindow(dpy, c->frame);
+    XSetInputFocus(dpy, c->client, RevertToParent, CurrentTime);
 }
 
 static void add_client(Window w) {
@@ -374,7 +383,33 @@ static void remove_client(Client *c) {
     update_net_client_list();
 }
 
+static void handle_root_activate(void) {
+    Window frame = 0;
+    Atom actual;
+    int fmt;
+    unsigned long n, bytes;
+    unsigned char *data = NULL;
+
+    if (XGetWindowProperty(dpy, root, br8_activate, 0, 1, True, XA_WINDOW,
+            &actual, &fmt, &n, &bytes, &data) != Success || !data || n < 1) {
+        if (data)
+            XFree(data);
+        return;
+    }
+    frame = *(Window *)data;
+    XFree(data);
+
+    Client *c = find_by_frame(frame);
+    if (c)
+        restore_client(c);
+}
+
 static void handle_property(XPropertyEvent *e) {
+    if (e->window == root && e->atom == br8_activate) {
+        handle_root_activate();
+        return;
+    }
+
     Client *c = find_by_client(e->window);
     if (!c)
         return;
@@ -481,7 +516,15 @@ int main(void) {
             handle_destroy(&ev.xdestroywindow);
         else if (ev.type == PropertyNotify)
             handle_property(&ev.xproperty);
-        else if (ev.type == ButtonPress) {
+        else if (ev.type == MapNotify) {
+            Client *c = find_by_frame(ev.xmap.window);
+            if (c)
+                c->mapped = 1;
+        } else if (ev.type == UnmapNotify) {
+            Client *c = find_by_frame(ev.xunmap.window);
+            if (c && ev.xunmap.window == c->frame)
+                c->mapped = 0;
+        } else if (ev.type == ButtonPress) {
             if (menu_visible && ev.xbutton.window == menu_win) {
                 hide_menu();
                 spawn_terminal_root();

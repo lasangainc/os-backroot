@@ -232,18 +232,14 @@ static TaskBtn *task_at(int px) {
 }
 
 static void activate_task(TaskBtn *t) {
-    XEvent ev;
-    memset(&ev, 0, sizeof(ev));
-    ev.xclient.type = ClientMessage;
-    ev.xclient.send_event = True;
-    ev.xclient.display = dpy;
-    ev.xclient.window = root;
-    ev.xclient.message_type = br8_activate;
-    ev.xclient.format = 32;
-    ev.xclient.data.l[0] = (long)t->frame;
-    ev.xclient.data.l[1] = 1; /* restore */
-    XSendEvent(dpy, root, False, NoEventMask, &ev);
+    /* Tell WM to restore (property is reliable; ClientMessage often is not). */
+    XChangeProperty(dpy, root, br8_activate, XA_WINDOW, 32, PropModeReplace,
+        (unsigned char *)&t->frame, 1);
+    /* Also map directly — is_our_chrome prevents duplicate title bars now. */
+    XMapWindow(dpy, t->frame);
+    XMapSubwindows(dpy, t->frame);
     XRaiseWindow(dpy, t->frame);
+    XFlush(dpy);
 }
 
 static unsigned long read_panel_rev(void) {
