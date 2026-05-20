@@ -16,11 +16,17 @@ A minimal desktop environment built from scratch on **Arch Linux** with the prec
 # Build disk image (~4GB, requires network)
 sudo ./scripts/build-rootfs.sh
 
-# Start VM (VNC on port 5901)
-./scripts/run-vm.sh
+# Start VM + open GUI in browser
+./scripts/run-vm-gui.sh
 ```
 
-Connect with a VNC client to `localhost:5901`. Login: **root** / **backroot8** — X starts automatically on tty1.
+**Use the GUI in your browser** (not SSH):
+
+**http://localhost:6080/vnc.html?autoconnect=1&resize=scale**
+
+In Cursor: open **Ports**, forward **6080**, then click the forwarded link.
+
+Optional: connect a VNC app to `localhost:5902`. The desktop starts automatically on boot (no login needed).
 
 ## Project layout
 

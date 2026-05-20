@@ -77,5 +77,5 @@ nohup qemu-system-x86_64 \
 
 echo $! > "$PIDFILE"
 echo "Backroot 8 VM started (PID $(cat "$PIDFILE"))"
-echo "VNC: connect to localhost:${VNC_PORT} (display ${VNC_DISPLAY})"
-echo "SSH: ssh -p 2222 root@localhost (password: backroot8)"
+echo "GUI:  run ./scripts/run-vm-gui.sh  OR  open http://localhost:6080/vnc.html?autoconnect=1"
+echo "VNC:  localhost:${VNC_PORT} (display ${VNC_DISPLAY})"
