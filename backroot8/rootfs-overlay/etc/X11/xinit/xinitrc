@@ -1,0 +1,16 @@
+#!/bin/sh
+# Backroot 8 session startup
+export DESKTOP_SESSION=backroot8
+export DISPLAY=:0
+xrdb -merge /etc/X11/Xresources 2>/dev/null || true
+xsetroot -solid "#1e2030"
+
+# Panel first (transparent taskbar, no blur)
+/usr/local/bin/br8-panel &
+PANEL_PID=$!
+
+# Default terminal at root
+xterm -fa Monospace -fs 11 -bg "#1a1a22" -fg "#e8e8ec" &
+
+# Window manager (exec keeps the X session alive)
+exec /usr/local/bin/br8-wm
