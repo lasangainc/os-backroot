@@ -85,10 +85,20 @@ static Client *find_by_frame(Window frame) {
 }
 
 static int is_our_chrome(Window w) {
+    if (!w)
+        return 1;
     if (find_client(w) || find_by_frame(w) || find_by_client(w))
         return 1;
     Window root_ret, parent;
-    XQueryTree(dpy, w, &root_ret, &parent, NULL, NULL);
+    Window *children = NULL;
+    unsigned int nch = 0;
+    if (!XQueryTree(dpy, w, &root_ret, &parent, &children, &nch)) {
+        if (children)
+            XFree(children);
+        return 1;
+    }
+    if (children)
+        XFree(children);
     for (int i = 0; i < nclients; i++) {
         if (parent == clients[i].frame)
             return 1;
