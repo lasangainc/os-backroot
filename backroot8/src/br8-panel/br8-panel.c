@@ -1,5 +1,5 @@
 /*
- * Backroot 8 panel - simple transparent taskbar (no blur)
+ * Backroot 8 panel - transparent taskbar with open-app icons
  */
 #include <X11/Xlib.h>
 #include <X11/Xatom.h>
@@ -8,18 +8,39 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
+#include <sys/select.h>
 
 #define PANEL_H 32
 #define ALPHA 0.82
+#define BRAND_W 118
+#define ICON_SZ 22
+#define ICON_PAD 4
+#define TASK_GAP 6
+#define MAX_TASKS 48
+
+typedef struct {
+    Window frame;
+    Window client;
+    Pixmap icon;
+    int icon_w, icon_h;
+    char label[64];
+    int x;
+    int w;
+} TaskBtn;
 
 static Display *dpy;
 static int screen;
 static Window panel, root;
 static GC gc;
+static XFontStruct *panel_font;
 static int panel_w;
+static Atom br8_frame, br8_client, br8_panel_rev, net_wm_icon, net_wm_name, utf8_string;
+static TaskBtn tasks[MAX_TASKS];
+static int ntasks;
+static unsigned long last_rev;
 
 static unsigned long rgba(int r, int g, int b, double a) {
-    /* Solid blend on dark bg - no compositor blur */
     int R = (int)(r * a + 20 * (1 - a));
     int G = (int)(g * a + 22 * (1 - a));
     int B = (int)(b * a + 30 * (1 - a));
@@ -29,6 +50,188 @@ static unsigned long rgba(int r, int g, int b, double a) {
     c.blue = B << 8;
     XAllocColor(dpy, DefaultColormap(dpy, screen), &c);
     return c.pixel;
+}
+
+static unsigned long class_color(const char *s) {
+    unsigned h = 0;
+    for (const char *p = s; p && *p; p++)
+        h = h * 31 + (unsigned char)*p;
+    int r = 60 + (h & 0x7f);
+    int g = 60 + ((h >> 8) & 0x7f);
+    int b = 60 + ((h >> 16) & 0x7f);
+    return rgba(r, g, b, 1.0);
+}
+
+static void free_tasks(void) {
+    for (int i = 0; i < ntasks; i++) {
+        if (tasks[i].icon)
+            XFreePixmap(dpy, tasks[i].icon);
+        tasks[i].icon = 0;
+    }
+    ntasks = 0;
+}
+
+static Pixmap icon_from_net_wm(Window client) {
+    Atom actual;
+    int fmt;
+    unsigned long n, bytes;
+    unsigned long *data = NULL;
+
+    if (XGetWindowProperty(dpy, client, net_wm_icon, 0, 256 * 256 * 4, False,
+            XA_CARDINAL, &actual, &fmt, &n, &bytes, (unsigned char **)&data) != Success || !data || n < 2)
+        return 0;
+
+    unsigned long iw = data[0], ih = data[1];
+    if (iw == 0 || ih == 0 || n < 2 + iw * ih) {
+        XFree(data);
+        return 0;
+    }
+
+    /* pick first icon; scale into ICON_SZ */
+    XImage *img = XCreateImage(dpy, DefaultVisual(dpy, screen), 32, ZPixmap, 0,
+        NULL, (unsigned int)iw, (unsigned int)ih, 32, 0);
+    if (!img) {
+        XFree(data);
+        return 0;
+    }
+    img->data = (char *)malloc(img->bytes_per_line * ih);
+    if (!img->data) {
+        XDestroyImage(img);
+        XFree(data);
+        return 0;
+    }
+
+    for (unsigned long y = 0; y < ih; y++) {
+        for (unsigned long x = 0; x < iw; x++) {
+            unsigned long p = data[2 + y * iw + x];
+            unsigned long b = (p & 0xff) << 16 | (p >> 8 & 0xff) << 8 | (p >> 16 & 0xff);
+            unsigned long a = (p >> 24) & 0xff;
+            if (a < 128)
+                b = (DefaultScreen(dpy) == screen) ? 0x1e2030 : 0;
+            XPutPixel(img, (int)x, (int)y, b);
+        }
+    }
+    XFree(data);
+
+    Pixmap pm = XCreatePixmap(dpy, panel, ICON_SZ, ICON_SZ, DefaultDepth(dpy, screen));
+    GC igc = XCreateGC(dpy, pm, 0, NULL);
+    XSetForeground(dpy, igc, rgba(35, 38, 48, 1.0));
+    XFillRectangle(dpy, pm, igc, 0, 0, ICON_SZ, ICON_SZ);
+    XPutImage(dpy, pm, igc, img, 0, 0, 0, 0, (int)iw, (int)ih);
+    XDestroyImage(img);
+    XFreeGC(dpy, igc);
+    return pm;
+}
+
+static Pixmap icon_fallback(Window client) {
+    char letter = '?';
+    char label[64] = "App";
+    XClassHint hint;
+    if (XGetClassHint(dpy, client, &hint)) {
+        if (hint.res_class && hint.res_class[0]) {
+            letter = hint.res_class[0];
+            strncpy(label, hint.res_class, sizeof(label) - 1);
+        } else if (hint.res_name && hint.res_name[0]) {
+            letter = hint.res_name[0];
+            strncpy(label, hint.res_name, sizeof(label) - 1);
+        }
+        if (hint.res_name) XFree(hint.res_name);
+        if (hint.res_class) XFree(hint.res_class);
+    }
+
+    Pixmap pm = XCreatePixmap(dpy, panel, ICON_SZ, ICON_SZ, DefaultDepth(dpy, screen));
+    GC igc = XCreateGC(dpy, pm, 0, NULL);
+    XSetForeground(dpy, igc, class_color(label));
+    XFillRectangle(dpy, pm, igc, 0, 0, ICON_SZ, ICON_SZ);
+    XSetForeground(dpy, igc, rgba(240, 240, 245, 1.0));
+    char s[2] = { letter, 0 };
+    int tw = XTextWidth(panel_font, s, 1);
+    XDrawString(dpy, pm, igc, (ICON_SZ - tw) / 2, 16, s, 1);
+    XFreeGC(dpy, igc);
+    return pm;
+}
+
+static void get_client_label(Window client, char *buf, size_t n) {
+    unsigned char *data = NULL;
+    Atom type;
+    int fmt;
+    unsigned long items, bytes;
+
+    if (XGetWindowProperty(dpy, client, net_wm_name, 0, 256, False,
+            utf8_string, &type, &fmt, &items, &bytes, &data) == Success && data) {
+        snprintf(buf, n, "%.*s", (int)(n - 1), (char *)data);
+        XFree(data);
+        return;
+    }
+    char *name = NULL;
+    if (XFetchName(dpy, client, &name) && name) {
+        strncpy(buf, name, n - 1);
+        buf[n - 1] = '\0';
+        XFree(name);
+        return;
+    }
+    strncpy(buf, "App", n);
+}
+
+static int is_br8_frame(Window w) {
+    Atom actual;
+    int fmt;
+    unsigned long n, bytes;
+    unsigned long *data = NULL;
+    int ok = 0;
+    if (XGetWindowProperty(dpy, w, br8_frame, 0, 8, False, XA_CARDINAL,
+            &actual, &fmt, &n, &bytes, (unsigned char **)&data) == Success && data && n > 0 && data[0])
+        ok = 1;
+    if (data) XFree(data);
+    return ok;
+}
+
+static Window frame_client(Window frame) {
+    Atom actual;
+    int fmt;
+    unsigned long n, bytes;
+    Window *data = NULL;
+    Window c = 0;
+    if (XGetWindowProperty(dpy, frame, br8_client, 0, 8, False, XA_WINDOW,
+            &actual, &fmt, &n, &bytes, (unsigned char **)&data) == Success && data && n > 0)
+        c = data[0];
+    if (data) XFree(data);
+    return c;
+}
+
+static void collect_tasks(void) {
+    free_tasks();
+    Window root_ret, parent_ret;
+    Window *children = NULL;
+    unsigned int nch;
+    if (!XQueryTree(dpy, root, &root_ret, &parent_ret, &children, &nch))
+        return;
+
+    int x = BRAND_W + 8;
+    for (unsigned int i = 0; i < nch && ntasks < MAX_TASKS; i++) {
+        if (children[i] == panel || !is_br8_frame(children[i]))
+            continue;
+
+        Window frame = children[i];
+        Window client = frame_client(frame);
+        if (!client)
+            continue;
+
+        TaskBtn *t = &tasks[ntasks++];
+        t->frame = frame;
+        t->client = client;
+        t->x = x;
+        t->w = ICON_SZ + ICON_PAD * 2;
+        x += t->w + TASK_GAP;
+
+        get_client_label(client, t->label, sizeof(t->label));
+        t->icon = icon_from_net_wm(client);
+        if (!t->icon)
+            t->icon = icon_fallback(client);
+        t->icon_w = ICON_SZ;
+        t->icon_h = ICON_SZ;
+    }
+    if (children) XFree(children);
 }
 
 static void draw_panel(void) {
@@ -44,13 +247,50 @@ static void draw_panel(void) {
     XSetForeground(dpy, gc, rgba(120, 180, 255, 1.0));
     XDrawString(dpy, panel, gc, 12, 21, "Backroot 8", 10);
 
+    collect_tasks();
+
+    for (int i = 0; i < ntasks; i++) {
+        int ix = tasks[i].x + ICON_PAD;
+        int iy = (PANEL_H - ICON_SZ) / 2;
+        XSetForeground(dpy, gc, rgba(55, 60, 75, 0.9));
+        XFillRectangle(dpy, panel, gc, tasks[i].x, iy - 2, tasks[i].w, ICON_SZ + 4);
+        if (tasks[i].icon)
+            XCopyArea(dpy, tasks[i].icon, panel, gc, 0, 0, ICON_SZ, ICON_SZ, ix, iy);
+    }
+
     time_t t = time(NULL);
     struct tm *tm = localtime(&t);
     char buf[64];
     strftime(buf, sizeof(buf), "%H:%M", tm);
-    int tw = XTextWidth(XLoadQueryFont(dpy, "fixed"), buf, strlen(buf));
+    int tw = XTextWidth(panel_font, buf, (int)strlen(buf));
     XSetForeground(dpy, gc, rgba(200, 200, 210, 1.0));
-    XDrawString(dpy, panel, gc, panel_w - tw - 16, 21, buf, strlen(buf));
+    XDrawString(dpy, panel, gc, panel_w - tw - 16, 21, buf, (int)strlen(buf));
+}
+
+static TaskBtn *task_at(int px) {
+    for (int i = 0; i < ntasks; i++)
+        if (px >= tasks[i].x && px < tasks[i].x + tasks[i].w)
+            return &tasks[i];
+    return NULL;
+}
+
+static void activate_task(TaskBtn *t) {
+    XMapWindow(dpy, t->frame);
+    XRaiseWindow(dpy, t->frame);
+    XSetInputFocus(dpy, t->client, RevertToParent, CurrentTime);
+}
+
+static unsigned long read_panel_rev(void) {
+    Atom actual;
+    int fmt;
+    unsigned long n, bytes;
+    unsigned long *data = NULL;
+    unsigned long rev = 0;
+    if (XGetWindowProperty(dpy, root, br8_panel_rev, 0, 8, False, XA_CARDINAL,
+            &actual, &fmt, &n, &bytes, (unsigned char **)&data) == Success && data && n > 0)
+        rev = data[0];
+    if (data) XFree(data);
+    return rev;
 }
 
 int main(void) {
@@ -61,6 +301,14 @@ int main(void) {
     }
     screen = DefaultScreen(dpy);
     root = RootWindow(dpy, screen);
+    panel_font = XLoadQueryFont(dpy, "fixed");
+
+    br8_frame = XInternAtom(dpy, "_BR8_FRAME", False);
+    br8_client = XInternAtom(dpy, "_BR8_CLIENT", False);
+    br8_panel_rev = XInternAtom(dpy, "_BR8_PANEL_REV", False);
+    net_wm_icon = XInternAtom(dpy, "_NET_WM_ICON", False);
+    net_wm_name = XInternAtom(dpy, "_NET_WM_NAME", False);
+    utf8_string = XInternAtom(dpy, "UTF8_STRING", False);
 
     XWindowAttributes ra;
     XGetWindowAttributes(dpy, root, &ra);
@@ -70,22 +318,48 @@ int main(void) {
         0, 0, rgba(30, 32, 42, ALPHA));
     XSetWindowAttributes attr;
     attr.override_redirect = True;
-    attr.event_mask = ExposureMask | StructureNotifyMask;
+    attr.event_mask = ExposureMask | StructureNotifyMask | ButtonPressMask | PropertyChangeMask;
     XChangeWindowAttributes(dpy, panel, CWOverrideRedirect | CWEventMask, &attr);
+    XSelectInput(dpy, root, PropertyChangeMask);
 
     gc = XCreateGC(dpy, panel, 0, NULL);
+    XSetFont(dpy, gc, panel_font->fid);
     XMapRaised(dpy, panel);
     draw_panel();
+    last_rev = read_panel_rev();
 
+    int xfd = ConnectionNumber(dpy);
     while (1) {
-        XEvent ev;
-        XNextEvent(dpy, &ev);
-        if (ev.type == Expose && ev.xexpose.count == 0)
+        fd_set fds;
+        FD_ZERO(&fds);
+        FD_SET(xfd, &fds);
+        struct timeval tv = { .tv_sec = 2, .tv_usec = 0 };
+        select(xfd + 1, &fds, NULL, NULL, &tv);
+
+        unsigned long rev = read_panel_rev();
+        if (rev != last_rev) {
+            last_rev = rev;
             draw_panel();
-        else if (ev.type == ConfigureNotify) {
-            XGetWindowAttributes(dpy, root, &ra);
-            XMoveResizeWindow(dpy, panel, 0, ra.height - PANEL_H, ra.width, PANEL_H);
-            draw_panel();
+        }
+
+        while (XPending(dpy)) {
+            XEvent ev;
+            XNextEvent(dpy, &ev);
+            if (ev.type == Expose && ev.xexpose.count == 0)
+                draw_panel();
+            else if (ev.type == ConfigureNotify) {
+                XGetWindowAttributes(dpy, root, &ra);
+                XMoveResizeWindow(dpy, panel, 0, ra.height - PANEL_H, ra.width, PANEL_H);
+                draw_panel();
+            } else if (ev.type == ButtonPress && ev.xbutton.window == panel) {
+                TaskBtn *t = task_at(ev.xbutton.x);
+                if (t)
+                    activate_task(t);
+            } else if (ev.type == PropertyNotify &&
+                       (ev.xproperty.window == root && ev.xproperty.atom == br8_panel_rev)) {
+                last_rev = read_panel_rev();
+                draw_panel();
+            }
         }
     }
     return 0;

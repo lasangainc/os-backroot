@@ -7,6 +7,8 @@ A minimal desktop environment built from scratch on **Arch Linux** with the prec
 - Custom window manager (`br8-wm`): draggable windows, minimize, maximize, close
 - Close button: elongated **X** inside a **red square** border
 - Right-click desktop → **New terminal at root**
+- Window titles show the app name, centered in the title bar
+- Taskbar shows open apps with icons (click to focus)
 - Transparent taskbar (`br8-panel`) — alpha blend only, **no blur**
 - Arch precompiled kernel (`linux` package from official repos)
 
