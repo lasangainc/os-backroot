@@ -40,7 +40,7 @@ static XFontStruct *title_font;
 static GC gc_title, gc_btn, gc_close_border, gc_close_x;
 static Atom wm_protocols, wm_delete;
 static Atom net_wm_name, net_client_list, utf8_string;
-static Atom br8_frame, br8_client, br8_panel_rev;
+static Atom br8_frame, br8_client, br8_panel_rev, br8_activate;
 static Client clients[256];
 static int nclients;
 static int dragging;
@@ -75,6 +75,25 @@ static Client *find_by_client(Window client) {
         if (clients[i].client == client)
             return &clients[i];
     return NULL;
+}
+
+static Client *find_by_frame(Window frame) {
+    for (int i = 0; i < nclients; i++)
+        if (clients[i].frame == frame)
+            return &clients[i];
+    return NULL;
+}
+
+static int is_our_chrome(Window w) {
+    if (find_client(w) || find_by_frame(w) || find_by_client(w))
+        return 1;
+    Window root_ret, parent;
+    XQueryTree(dpy, w, &root_ret, &parent, NULL, NULL);
+    for (int i = 0; i < nclients; i++) {
+        if (parent == clients[i].frame)
+            return 1;
+    }
+    return 0;
 }
 
 static void bump_panel(void) {
@@ -282,15 +301,23 @@ static void tag_frame(Client *c) {
         (unsigned char *)&c->client, 1);
 }
 
+static void restore_client(Client *c) {
+    if (!c || c->mapped)
+        return;
+    map_client(c);
+}
+
 static void add_client(Window w) {
     if (nclients >= 256)
         return;
+    if (is_our_chrome(w))
+        return;
+
     XWindowAttributes wa;
     if (!XGetWindowAttributes(dpy, w, &wa))
         return;
     if (wa.override_redirect)
         return;
-
     Client *c = &clients[nclients++];
     memset(c, 0, sizeof(*c));
     c->client = w;
@@ -349,15 +376,42 @@ static void handle_property(XPropertyEvent *e) {
 }
 
 static void handle_map_request(XMapRequestEvent *e) {
-    for (int i = 0; i < nclients; i++)
-        if (clients[i].client == e->window)
-            return;
-    add_client(e->window);
+    Window w = e->window;
+
+    if (is_our_chrome(w)) {
+        /* Never wrap our own frames/decorations (fixes stacked title bars). */
+        XMapWindow(dpy, w);
+        return;
+    }
+
+    Client *c = find_by_client(w);
+    if (c) {
+        if (!c->mapped)
+            map_client(c);
+        XMapWindow(dpy, w);
+        return;
+    }
+
+    add_client(w);
+}
+
+static void handle_client_message(XClientMessageEvent *e) {
+    if (e->message_type != br8_activate)
+        return;
+    Client *c = find_by_frame((Window)e->data.l[0]);
+    if (c)
+        restore_client(c);
 }
 
 static void handle_destroy(XDestroyWindowEvent *e) {
+    if (e->window == menu_win)
+        return;
     for (int i = 0; i < nclients; i++) {
-        if (clients[i].client == e->window || clients[i].frame == e->window) {
+        if (clients[i].client == e->window) {
+            remove_client(&clients[i]);
+            return;
+        }
+        if (clients[i].frame == e->window) {
             remove_client(&clients[i]);
             return;
         }
@@ -391,9 +445,11 @@ int main(void) {
     br8_frame = XInternAtom(dpy, "_BR8_FRAME", False);
     br8_client = XInternAtom(dpy, "_BR8_CLIENT", False);
     br8_panel_rev = XInternAtom(dpy, "_BR8_PANEL_REV", False);
+    br8_activate = XInternAtom(dpy, "_BR8_ACTIVATE", False);
 
     XSelectInput(dpy, root,
-        SubstructureRedirectMask | SubstructureNotifyMask | ButtonPressMask | PropertyChangeMask);
+        SubstructureRedirectMask | SubstructureNotifyMask | ButtonPressMask |
+        PropertyChangeMask | StructureNotifyMask);
     XSetErrorHandler(NULL);
     signal(SIGCHLD, SIG_IGN);
 
@@ -409,6 +465,8 @@ int main(void) {
 
         if (ev.type == MapRequest)
             handle_map_request(&ev.xmaprequest);
+        else if (ev.type == ClientMessage)
+            handle_client_message(&ev.xclient);
         else if (ev.type == DestroyNotify)
             handle_destroy(&ev.xdestroywindow);
         else if (ev.type == PropertyNotify)

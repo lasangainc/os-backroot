@@ -35,7 +35,8 @@ static Window panel, root;
 static GC gc;
 static XFontStruct *panel_font;
 static int panel_w;
-static Atom br8_frame, br8_client, br8_panel_rev, net_wm_icon, net_wm_name, utf8_string;
+static Atom br8_frame, br8_client, br8_panel_rev, br8_activate;
+static Atom net_wm_icon, net_wm_name, utf8_string;
 static TaskBtn tasks[MAX_TASKS];
 static int ntasks;
 static unsigned long last_rev;
@@ -231,9 +232,18 @@ static TaskBtn *task_at(int px) {
 }
 
 static void activate_task(TaskBtn *t) {
-    XMapWindow(dpy, t->frame);
+    XEvent ev;
+    memset(&ev, 0, sizeof(ev));
+    ev.xclient.type = ClientMessage;
+    ev.xclient.send_event = True;
+    ev.xclient.display = dpy;
+    ev.xclient.window = root;
+    ev.xclient.message_type = br8_activate;
+    ev.xclient.format = 32;
+    ev.xclient.data.l[0] = (long)t->frame;
+    ev.xclient.data.l[1] = 1; /* restore */
+    XSendEvent(dpy, root, False, NoEventMask, &ev);
     XRaiseWindow(dpy, t->frame);
-    XSetInputFocus(dpy, t->frame, RevertToParent, CurrentTime);
 }
 
 static unsigned long read_panel_rev(void) {
@@ -266,6 +276,7 @@ int main(void) {
     br8_frame = XInternAtom(dpy, "_BR8_FRAME", False);
     br8_client = XInternAtom(dpy, "_BR8_CLIENT", False);
     br8_panel_rev = XInternAtom(dpy, "_BR8_PANEL_REV", False);
+    br8_activate = XInternAtom(dpy, "_BR8_ACTIVATE", False);
     net_wm_icon = XInternAtom(dpy, "_NET_WM_ICON", False);
     net_wm_name = XInternAtom(dpy, "_NET_WM_NAME", False);
     utf8_string = XInternAtom(dpy, "UTF8_STRING", False);
