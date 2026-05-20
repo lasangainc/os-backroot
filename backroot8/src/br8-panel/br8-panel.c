@@ -72,55 +72,9 @@ static void free_tasks(void) {
 }
 
 static Pixmap icon_from_net_wm(Window client) {
-    Atom actual;
-    int fmt;
-    unsigned long n, bytes;
-    unsigned long *data = NULL;
-
-    if (XGetWindowProperty(dpy, client, net_wm_icon, 0, 256 * 256 * 4, False,
-            XA_CARDINAL, &actual, &fmt, &n, &bytes, (unsigned char **)&data) != Success || !data || n < 2)
-        return 0;
-
-    unsigned long iw = data[0], ih = data[1];
-    if (iw == 0 || ih == 0 || n < 2 + iw * ih) {
-        XFree(data);
-        return 0;
-    }
-
-    /* pick first icon; scale into ICON_SZ */
-    XImage *img = XCreateImage(dpy, DefaultVisual(dpy, screen), 32, ZPixmap, 0,
-        NULL, (unsigned int)iw, (unsigned int)ih, 32, 0);
-    if (!img) {
-        XFree(data);
-        return 0;
-    }
-    img->data = (char *)malloc(img->bytes_per_line * ih);
-    if (!img->data) {
-        XDestroyImage(img);
-        XFree(data);
-        return 0;
-    }
-
-    for (unsigned long y = 0; y < ih; y++) {
-        for (unsigned long x = 0; x < iw; x++) {
-            unsigned long p = data[2 + y * iw + x];
-            unsigned long b = (p & 0xff) << 16 | (p >> 8 & 0xff) << 8 | (p >> 16 & 0xff);
-            unsigned long a = (p >> 24) & 0xff;
-            if (a < 128)
-                b = (DefaultScreen(dpy) == screen) ? 0x1e2030 : 0;
-            XPutPixel(img, (int)x, (int)y, b);
-        }
-    }
-    XFree(data);
-
-    Pixmap pm = XCreatePixmap(dpy, panel, ICON_SZ, ICON_SZ, DefaultDepth(dpy, screen));
-    GC igc = XCreateGC(dpy, pm, 0, NULL);
-    XSetForeground(dpy, igc, rgba(35, 38, 48, 1.0));
-    XFillRectangle(dpy, pm, igc, 0, 0, ICON_SZ, ICON_SZ);
-    XPutImage(dpy, pm, igc, img, 0, 0, 0, 0, (int)iw, (int)ih);
-    XDestroyImage(img);
-    XFreeGC(dpy, igc);
-    return pm;
+    /* Skip _NET_WM_ICON XPutImage path (depth mismatch on std VGA); use fallback badge */
+    (void)client;
+    return 0;
 }
 
 static Pixmap icon_fallback(Window client) {
@@ -145,7 +99,7 @@ static Pixmap icon_fallback(Window client) {
     XFillRectangle(dpy, pm, igc, 0, 0, ICON_SZ, ICON_SZ);
     XSetForeground(dpy, igc, rgba(240, 240, 245, 1.0));
     char s[2] = { letter, 0 };
-    int tw = XTextWidth(panel_font, s, 1);
+    int tw = panel_font ? XTextWidth(panel_font, s, 1) : 6;
     XDrawString(dpy, pm, igc, (ICON_SZ - tw) / 2, 16, s, 1);
     XFreeGC(dpy, igc);
     return pm;
@@ -262,9 +216,11 @@ static void draw_panel(void) {
     struct tm *tm = localtime(&t);
     char buf[64];
     strftime(buf, sizeof(buf), "%H:%M", tm);
-    int tw = XTextWidth(panel_font, buf, (int)strlen(buf));
+    int tw = panel_font ? XTextWidth(panel_font, buf, (int)strlen(buf)) : 40;
     XSetForeground(dpy, gc, rgba(200, 200, 210, 1.0));
     XDrawString(dpy, panel, gc, panel_w - tw - 16, 21, buf, (int)strlen(buf));
+
+    XRaiseWindow(dpy, panel);
 }
 
 static TaskBtn *task_at(int px) {
@@ -277,7 +233,7 @@ static TaskBtn *task_at(int px) {
 static void activate_task(TaskBtn *t) {
     XMapWindow(dpy, t->frame);
     XRaiseWindow(dpy, t->frame);
-    XSetInputFocus(dpy, t->client, RevertToParent, CurrentTime);
+    XSetInputFocus(dpy, t->frame, RevertToParent, CurrentTime);
 }
 
 static unsigned long read_panel_rev(void) {
@@ -302,6 +258,10 @@ int main(void) {
     screen = DefaultScreen(dpy);
     root = RootWindow(dpy, screen);
     panel_font = XLoadQueryFont(dpy, "fixed");
+    if (!panel_font)
+        panel_font = XLoadQueryFont(dpy, "6x13");
+
+    XSetErrorHandler(NULL);
 
     br8_frame = XInternAtom(dpy, "_BR8_FRAME", False);
     br8_client = XInternAtom(dpy, "_BR8_CLIENT", False);
@@ -323,7 +283,8 @@ int main(void) {
     XSelectInput(dpy, root, PropertyChangeMask);
 
     gc = XCreateGC(dpy, panel, 0, NULL);
-    XSetFont(dpy, gc, panel_font->fid);
+    if (panel_font)
+        XSetFont(dpy, gc, panel_font->fid);
     XMapRaised(dpy, panel);
     draw_panel();
     last_rev = read_panel_rev();

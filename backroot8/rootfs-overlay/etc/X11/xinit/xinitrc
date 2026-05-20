@@ -5,8 +5,8 @@ export DISPLAY=:0
 xrdb -merge /etc/X11/Xresources 2>/dev/null || true
 xsetroot -solid "#1e2030"
 
-# Panel first (transparent taskbar, no blur)
-/usr/local/bin/br8-panel &
+# Panel first (transparent taskbar, no blur); restart if it exits
+( while true; do /usr/local/bin/br8-panel; sleep 1; done ) &
 PANEL_PID=$!
 
 # Default terminal at root (xterm)
