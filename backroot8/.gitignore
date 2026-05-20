@@ -4,6 +4,8 @@ vm/mnt/
 vm/vmlinuz-linux
 vm/initramfs-linux.img
 vm/qemu.pid
+vm/websockify.pid
+vm/websockify.log
 vm/qemu.log
 vm/serial.log
 vm/build.log
