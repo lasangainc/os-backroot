@@ -6,7 +6,7 @@ Guide for AI agents working on **os-backroot** / **Backroot 8**: a minimal X11 d
 
 | Item | Detail |
 |------|--------|
-| **Goal** | Custom DE from scratch on Arch with precompiled `linux` kernel |
+| **Goal** | Linux distro with custom DE styled to look like Windows 8, built on Arch with precompiled `linux` kernel |
 | **WM** | `br8-wm` — C, Xlib only |
 | **Panel** | `br8-panel` — C, Xlib only |
 | **Session** | `startx` → `xinitrc` → panel + xterm + `exec br8-wm` |
@@ -143,6 +143,7 @@ Check zombies: `ps` STAT `Z` on qemu PID — remove stale `qemu.pid` before rest
 - **Scope:** Smallest correct diff; match existing style in `br8-wm.c` / `br8-panel.c`.
 - **Comments:** Only for non-obvious protocol or X11 quirks.
 - **Do not commit:** `vm/*.img`, bootstrap tarball, `qemu.pid`, `websockify.log`, compiled binaries.
+- **Windows 8 styling:** Do not apply Windows 8 visual styling (tiles, metro UI, colors, etc.) unless the developer explicitly requests it in that task.
 
 ## systemd session
 
@@ -176,3 +177,24 @@ After WM/panel changes:
 - User-facing docs: [backroot8/README.md](backroot8/README.md)
 - Arch packages in image: `linux`, `xorg-server`, `xorg-xinit`, `xterm`, `nettle`, `networkmanager`, `openssh`
 - Active development branch (example): `cursor/backroot-8-4238`
+
+## Cursor Cloud specific instructions
+
+### System dependencies (pre-installed in the update script)
+
+`gcc`, `libx11-dev`, `pkg-config` are already available. The update script installs `qemu-system-x86`, `arch-install-scripts`, `novnc`, `sshpass`, and `zstd` if missing.
+
+### Build & run workflow
+
+1. **Compile binaries:** `make -C backroot8/src/br8-wm` and `make -C backroot8/src/br8-panel` — both must build with zero warnings.
+2. **First-time image build:** `mkdir -p backroot8/vm && cd backroot8 && sudo ./scripts/build-rootfs.sh` — creates a ~4 GB Arch ext4 disk image under `backroot8/vm/`. Requires network for Arch bootstrap tarball download. The `vm/` directory must exist before running the script (it is gitignored).
+3. **Start VM + noVNC:** `./backroot8/scripts/run-vm-gui.sh` — boots QEMU (VNC :5902) and starts websockify on port 6080.
+4. **Browser access:** `http://localhost:6080/vnc.html?autoconnect=1&resize=scale`
+
+### Gotchas discovered during setup
+
+- The Arch guest image needs `xf86-video-vesa` installed for Xorg to render on QEMU's emulated VGA. If the desktop shows only a text console after boot, mount the image and `arch-chroot` to install the driver: `sudo pacman -S --noconfirm xf86-video-vesa`.
+- `/etc/X11/xinit/xinitrc` in the guest must be executable (`chmod +x`), otherwise `startx` silently fails.
+- SSH as root requires `PermitRootLogin yes` in `/etc/ssh/sshd_config` inside the guest; the default Arch config uses `prohibit-password`.
+- No KVM acceleration is available in the Cloud Agent VM (`/dev/kvm` missing); QEMU falls back to TCG software emulation, which is slow but functional.
+- The `build-rootfs.sh` script expects the `backroot8/vm/` directory to already exist before downloading the bootstrap tarball — create it beforehand with `mkdir -p backroot8/vm`.
