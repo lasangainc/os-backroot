@@ -31,6 +31,7 @@ make -C "$ROOT/src/br8-panel" emblem.h
 log "Building binaries..."
 make -C "$ROOT/src/br8-wm" clean br8-wm
 make -C "$ROOT/src/br8-panel" clean br8-panel
+make -C "$ROOT/src/backroot-hello" clean backroot-hello
 
 if [[ ! -f "$BOOTSTRAP" ]]; then
     log "Downloading Arch bootstrap..."
@@ -91,7 +92,7 @@ pacman -S --noconfirm --needed \
     linux linux-firmware \
     base base-devel \
     xorg-server xorg-xinit xorg-xrandr xf86-video-vesa \
-    xterm dolphin feh fbida nettle xorg-fonts-misc libxft ttf-dejavu \
+    xterm dolphin feh fbida nettle xorg-fonts-misc libxft ttf-dejavu gtk4 x11vnc unzip \
     systemd-sysvcompat \
     sudo networkmanager \
     mkinitcpio grub efibootmgr \
@@ -151,6 +152,13 @@ CHROOT
 log "Installing Backroot 8 desktop..."
 sudo install -Dm755 "$ROOT/src/br8-wm/br8-wm" "$MNT/usr/local/bin/br8-wm"
 sudo install -Dm755 "$ROOT/src/br8-panel/br8-panel" "$MNT/usr/local/bin/br8-panel"
+sudo install -Dm755 "$ROOT/src/backroot-hello/backroot-hello" "$MNT/usr/local/bin/backroot-hello"
+sudo install -Dm644 "$ROOT/rootfs-overlay/usr/share/backroot/backroot-hello/backroot-hello.css" \
+    "$MNT/usr/share/backroot/backroot-hello/backroot-hello.css"
+sudo install -Dm644 "$ROOT/rootfs-overlay/usr/share/backroot/README" \
+    "$MNT/usr/share/backroot/README"
+sudo install -Dm644 "$ROOT/rootfs-overlay/usr/share/applications/backroot-hello.desktop" \
+    "$MNT/usr/share/applications/backroot-hello.desktop"
 
 sudo install -Dm755 "$ROOT/rootfs-overlay/etc/X11/xinit/xinitrc" "$MNT/etc/X11/xinit/xinitrc"
 sudo install -Dm644 "$ROOT/rootfs-overlay/usr/share/backgrounds/backroot8.jpg" \
@@ -167,6 +175,19 @@ sudo install -Dm644 "$ROOT/rootfs-overlay/etc/systemd/system/backroot8-desktop.s
     "$MNT/etc/systemd/system/backroot8-desktop.service"
 sudo install -Dm644 "$ROOT/rootfs-overlay/etc/systemd/system/backroot8-splash.service" \
     "$MNT/etc/systemd/system/backroot8-splash.service"
+sudo install -Dm644 "$ROOT/rootfs-overlay/etc/fonts/conf.d/99-segoe-ui.conf" \
+    "$MNT/etc/fonts/conf.d/99-segoe-ui.conf"
+
+log "Installing Segoe UI font (Microsoft Segoe UI Variable)..."
+SEGOE_TMP="$(mktemp -d)"
+curl -fsSL -o "$SEGOE_TMP/segoe-ui-variable.zip" "https://aka.ms/SegoeUIVariable"
+unzip -q "$SEGOE_TMP/segoe-ui-variable.zip" -d "$SEGOE_TMP/extract"
+sudo mkdir -p "$MNT/usr/share/fonts/segoe-ui" "$MNT/usr/share/licenses/segoe-ui-variable"
+sudo install -Dm644 "$SEGOE_TMP/extract"/Segoe*.ttf "$MNT/usr/share/fonts/segoe-ui/"
+sudo install -Dm644 "$SEGOE_TMP/extract/EULA.txt" "$MNT/usr/share/licenses/segoe-ui-variable/LICENSE"
+sudo arch-chroot "$MNT" fc-cache -f
+rm -rf "$SEGOE_TMP"
+
 sudo arch-chroot "$MNT" systemctl enable backroot8-splash.service backroot8-desktop.service sshd 2>/dev/null || true
 
 sudo mkdir -p "$MNT/root"
