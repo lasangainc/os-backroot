@@ -51,6 +51,11 @@ typedef struct {
     int drag_scroll_active;
     double drag_begin_y;
     int ctl_fd;
+#ifdef GDK_WINDOWING_X11
+    Display *xdpy;
+    Window xroot;
+    Atom br8_start_menu_atom;
+#endif
 } AppState;
 
 static AppState g_state;
@@ -652,6 +657,72 @@ static gboolean ctl_io_cb(GIOChannel *source, GIOCondition cond, gpointer user_d
     return TRUE;
 }
 
+#ifdef GDK_WINDOWING_X11
+static gboolean x11_io_cb(GIOChannel *source, GIOCondition cond, gpointer data) {
+    AppState *st = data;
+
+    (void)source;
+    (void)cond;
+    while (XPending(st->xdpy)) {
+        XEvent ev;
+        XNextEvent(st->xdpy, &ev);
+        if (ev.type == PropertyNotify &&
+            ev.xproperty.window == st->xroot &&
+            ev.xproperty.atom == st->br8_start_menu_atom)
+            show_menu(st);
+    }
+    return TRUE;
+}
+
+static void setup_x11_toggle(AppState *st) {
+    GdkDisplay *gdpy = gdk_display_get_default();
+    GIOChannel *ch;
+
+    if (!GDK_IS_X11_DISPLAY(gdpy))
+        return;
+
+    st->xdpy = gdk_x11_display_get_xdisplay(gdpy);
+    st->xroot = DefaultRootWindow(st->xdpy);
+    st->br8_start_menu_atom = XInternAtom(st->xdpy, "_BR8_START_MENU", False);
+    XSelectInput(st->xdpy, st->xroot, PropertyChangeMask);
+
+    ch = g_io_channel_unix_new(ConnectionNumber(st->xdpy));
+    g_io_channel_set_encoding(ch, NULL, NULL);
+    g_io_channel_set_flags(ch, G_IO_FLAG_NONBLOCK, NULL);
+    g_io_add_watch(ch, G_IO_IN, x11_io_cb, st);
+    g_io_channel_unref(ch);
+}
+#endif
+
+static int request_toggle_via_x11(void) {
+#ifdef GDK_WINDOWING_X11
+    Display *d = XOpenDisplay(NULL);
+    Atom atom;
+    unsigned long rev = 1;
+    unsigned long *data = NULL;
+    unsigned long n;
+
+    if (!d)
+        return 0;
+
+    atom = XInternAtom(d, "_BR8_START_MENU", False);
+    if (XGetWindowProperty(d, DefaultRootWindow(d), atom, 0, 8, False, XA_CARDINAL,
+            NULL, NULL, &n, NULL, (unsigned char **)&data) == Success && data && n > 0)
+        rev = data[0] + 1;
+    if (data)
+        XFree(data);
+
+    XChangeProperty(d, DefaultRootWindow(d), atom, XA_CARDINAL, 32, PropModeReplace,
+        (unsigned char *)&rev, 1);
+    XFlush(d);
+    XCloseDisplay(d);
+    return 1;
+#else
+    (void)0;
+    return 0;
+#endif
+}
+
 static void setup_ctl_fifo(AppState *st) {
     GIOChannel *ch;
 
@@ -812,6 +883,9 @@ static void activate(GtkApplication *app, gpointer user_data) {
     }
 
     setup_ctl_fifo(st);
+#ifdef GDK_WINDOWING_X11
+    setup_x11_toggle(st);
+#endif
 }
 
 static gboolean startup_activate_idle(gpointer data) {
@@ -834,13 +908,24 @@ int main(int argc, char **argv) {
         if (strcmp(argv[i], "--daemon") == 0)
             g_daemon_mode = TRUE;
         else if (strcmp(argv[i], "--toggle") == 0) {
-            int fd = open(CTL_FIFO, O_WRONLY | O_NONBLOCK);
+            char c = 't';
+            int fd;
+
+            if (request_toggle_via_x11())
+                return 0;
+
+            fd = open(CTL_FIFO, O_WRONLY | O_NONBLOCK);
             if (fd >= 0) {
-                char c = 't';
-                (void)write(fd, &c, 1);
+                if (write(fd, &c, 1) == 1) {
+                    close(fd);
+                    return 0;
+                }
                 close(fd);
             }
-            return 0;
+
+            fprintf(stderr,
+                "br8-start-menu: daemon not running? Start with: DISPLAY=:0 br8-start-menu &\n");
+            return 1;
         }
     }
 

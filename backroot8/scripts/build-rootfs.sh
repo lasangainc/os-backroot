@@ -153,6 +153,8 @@ CHROOT
 log "Installing Backroot 8 desktop..."
 sudo install -Dm755 "$ROOT/src/br8-wm/br8-wm" "$MNT/usr/local/bin/br8-wm"
 sudo install -Dm755 "$ROOT/src/br8-panel/br8-panel" "$MNT/usr/local/bin/br8-panel"
+sudo install -Dm755 "$ROOT/rootfs-overlay/usr/local/bin/br8-toggle-start-menu" \
+    "$MNT/usr/local/bin/br8-toggle-start-menu"
 log "Building GTK binaries inside Arch chroot..."
 sudo rm -rf "$MNT/tmp/br8-start-menu" "$MNT/tmp/backroot-hello"
 sudo cp -r "$ROOT/src/br8-start-menu" "$MNT/tmp/br8-start-menu"

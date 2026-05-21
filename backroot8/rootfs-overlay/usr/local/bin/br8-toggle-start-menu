@@ -1,0 +1,8 @@
+#!/bin/sh
+# Toggle the Backroot 8 start menu (works from SSH or a terminal in the session)
+export DISPLAY="${DISPLAY:-:0}"
+if [ -x /usr/local/bin/br8-start-menu ]; then
+    exec /usr/local/bin/br8-start-menu --toggle
+fi
+echo "br8-start-menu not installed" >&2
+exit 1
