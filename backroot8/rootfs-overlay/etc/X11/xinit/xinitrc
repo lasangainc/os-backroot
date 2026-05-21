@@ -3,7 +3,12 @@
 export DESKTOP_SESSION=backroot8
 export DISPLAY=:0
 xrdb -merge /etc/X11/Xresources 2>/dev/null || true
-xsetroot -solid "#1e2030"
+WALLPAPER=/usr/share/backgrounds/backroot8.jpg
+if command -v feh >/dev/null && [ -r "$WALLPAPER" ]; then
+    feh --bg-fill "$WALLPAPER" &
+else
+    xsetroot -solid "#1e2030"
+fi
 
 # Panel first (transparent taskbar, no blur); restart if it exits
 ( while true; do /usr/local/bin/br8-panel; sleep 1; done ) &

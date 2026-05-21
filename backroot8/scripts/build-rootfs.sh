@@ -87,7 +87,7 @@ pacman -S --noconfirm --needed \
     linux linux-firmware \
     base base-devel \
     xorg-server xorg-xinit xorg-xrandr \
-    xfce4-terminal xterm dolphin nettle xorg-fonts-misc \
+    xfce4-terminal xterm dolphin feh nettle xorg-fonts-misc \
     systemd-sysvcompat \
     sudo networkmanager \
     mkinitcpio grub efibootmgr \
@@ -143,7 +143,9 @@ log "Installing Backroot 8 desktop..."
 sudo install -Dm755 "$ROOT/src/br8-wm/br8-wm" "$MNT/usr/local/bin/br8-wm"
 sudo install -Dm755 "$ROOT/src/br8-panel/br8-panel" "$MNT/usr/local/bin/br8-panel"
 
-sudo install -Dm644 "$ROOT/rootfs-overlay/etc/X11/xinit/xinitrc" "$MNT/etc/X11/xinit/xinitrc"
+sudo install -Dm755 "$ROOT/rootfs-overlay/etc/X11/xinit/xinitrc" "$MNT/etc/X11/xinit/xinitrc"
+sudo install -Dm644 "$ROOT/rootfs-overlay/usr/share/backgrounds/backroot8.jpg" \
+    "$MNT/usr/share/backgrounds/backroot8.jpg"
 sudo install -Dm644 "$ROOT/rootfs-overlay/etc/profile.d/backroot8.sh" "$MNT/etc/profile.d/backroot8.sh"
 sudo install -Dm644 "$ROOT/rootfs-overlay/etc/motd" "$MNT/etc/motd"
 sudo install -Dm644 "$ROOT/rootfs-overlay/etc/systemd/system/backroot8-desktop.service" \

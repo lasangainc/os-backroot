@@ -150,8 +150,9 @@ Check zombies: `ps` STAT `Z` on qemu PID — remove stale `qemu.pid` before rest
 `backroot8-desktop.service` runs `startx` on tty1. `xinitrc`:
 
 1. Panel loop: `( while true; do br8-panel; sleep 1; done ) &`
-2. Optional default `xterm`
-3. `exec br8-wm` (keeps session alive)
+2. Wallpaper via `feh --bg-fill /usr/share/backgrounds/backroot8.jpg` (fallback: solid `#1e2030`)
+3. Optional default `xterm`
+4. `exec br8-wm` (keeps session alive)
 
 `getty@tty1` is disabled when desktop service is enabled (avoid tty/session fight).
 
