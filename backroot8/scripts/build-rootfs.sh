@@ -111,6 +111,9 @@ cat > /etc/hosts <<EOF
 127.0.1.1   backroot8.localdomain backroot8
 EOF
 
+sed -i 's/^#*PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
+grep -q '^PermitRootLogin yes' /etc/ssh/sshd_config || echo 'PermitRootLogin yes' >> /etc/ssh/sshd_config
+
 systemctl enable NetworkManager
 systemctl enable sshd
 systemctl enable backroot8-desktop.service 2>/dev/null || true
