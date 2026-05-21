@@ -18,4 +18,8 @@ PANEL_PID=$!
 xterm -fa Monospace -fs 11 -bg "#1a1a22" -fg "#e8e8ec" -title root@Backroot8 -e /bin/bash -l &
 
 # Window manager (exec keeps the X session alive)
+# Export X desktop over VNC for noVNC (QEMU std VGA shows the text console)
+if command -v x11vnc >/dev/null; then
+    x11vnc -display :0 -forever -nopw -listen 127.0.0.1 -rfbport 5900 -shared -bg -o /tmp/x11vnc.log
+fi
 exec /usr/local/bin/br8-wm

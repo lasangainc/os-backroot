@@ -1,0 +1,98 @@
+/* Backroot Hello — light Metro-style theming */
+
+window.hello-window {
+    background-color: #5131a9;
+}
+
+.hello-content {
+    background-color: transparent;
+}
+
+.hello-title {
+    font-family: "Segoe UI Light", "Segoe UI", "Cantarell Light", sans-serif;
+    font-size: 42px;
+    font-weight: 300;
+    color: #ffffff;
+    margin-bottom: 12px;
+    letter-spacing: -0.5px;
+}
+
+.hello-subtitle {
+    font-family: "Segoe UI", Cantarell, sans-serif;
+    font-size: 14px;
+    font-weight: 400;
+    color: #ffffff;
+    opacity: 0.92;
+    margin-bottom: 36px;
+    line-height: 1.45;
+}
+
+.hello-settings {
+    margin-top: 4px;
+}
+
+.setting-row {
+    margin-bottom: 4px;
+}
+
+.setting-label {
+    font-family: "Segoe UI Semibold", "Segoe UI", Cantarell, sans-serif;
+    font-size: 13px;
+    font-weight: 600;
+    color: #ffffff;
+    margin-bottom: 4px;
+}
+
+.hello-dropdown {
+    min-height: 38px;
+    background-color: rgba(255, 255, 255, 0.12);
+    color: #ffffff;
+    border: 1px solid rgba(255, 255, 255, 0.28);
+    border-radius: 0;
+}
+
+.hello-dropdown > button {
+    color: #ffffff;
+    background-color: transparent;
+    border-radius: 0;
+    padding: 8px 12px;
+}
+
+.hello-dropdown > button:hover {
+    background-color: rgba(255, 255, 255, 0.08);
+}
+
+.hello-dropdown popover {
+    background-color: #3f2785;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 0;
+}
+
+.hello-dropdown popover listview {
+    background-color: #3f2785;
+    color: #ffffff;
+}
+
+.hello-dropdown popover listview row {
+    color: #ffffff;
+    border-radius: 0;
+}
+
+.hello-dropdown popover listview row:selected {
+    background-color: rgba(255, 255, 255, 0.18);
+}
+
+label {
+    color: #ffffff;
+}
+
+headerbar {
+    background-color: #5131a9;
+    color: #ffffff;
+    border: none;
+    box-shadow: none;
+}
+
+headerbar label.title {
+    color: #ffffff;
+}

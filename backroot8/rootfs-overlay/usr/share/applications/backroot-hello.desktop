@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=Backroot Hello
+Comment=Configure keyboard layout and timezone
+Exec=/usr/local/bin/backroot-hello
+Icon=preferences-system
+Terminal=false
+Type=Application
+Categories=System;Settings;
+StartupNotify=true
