@@ -35,11 +35,13 @@
 #define WALLPAPER "/usr/share/backgrounds/backroot8.jpg"
 #define CONFIG_DIR "/root/.config/backroot8"
 #define CONFIG_PATH CONFIG_DIR "/start_layout"
-#define ANIM_MS_OPEN 380.0
-#define ANIM_MS_MOVE 220.0
+#define ANIM_MS_OPEN 240.0
+#define OPEN_FLYIN 64
+#define SMOOTH_TAU_MS 40.0
 #define DRAG_THRESHOLD 6
-#define DRAG_SCALE 0.82
-#define TICK_MS 16
+#define DRAG_SCALE 0.88
+#define TICK_MS 8
+#define COLOR_CACHE_MAX 512
 #define CTX_W 200
 #define CTX_H 36
 
@@ -63,6 +65,7 @@ typedef struct {
     char exec_cmd[512];
     int is_wide;
     int pinned;
+    unsigned long fill_pixel;
 } Tile;
 
 typedef struct {
@@ -97,8 +100,28 @@ static int n_apps;
 
 static double open_anim;
 static struct timespec open_anim_start;
+static int open_start_y[MAX_HOME_TILES];
 static int layout_animating;
-static struct timespec layout_anim_start;
+static struct timespec last_tick;
+
+static Pixmap buf_pm;
+static Pixmap static_pm;
+static int buf_w, buf_h;
+static int static_valid;
+static int static_scroll;
+static GC buf_gc;
+
+static struct {
+    int r, g, b;
+    unsigned long pix;
+} color_cache[COLOR_CACHE_MAX];
+static int n_color_cache;
+static XftDraw *xft_dc;
+static XftColor xft_white;
+static int xft_white_ok;
+static unsigned long pix_bg, pix_line, pix_ctx_bg, pix_ctx_border;
+
+static int frame_dirty;
 
 static int dragging;
 static int drag_tile_idx;
@@ -115,20 +138,17 @@ static int ctx_app_idx;
 static int ctx_is_tile;
 
 static void draw_all(void);
+static void mark_dirty(void);
 static void layout_home(void);
 static void save_layout(void);
 static void load_layout(void);
-
-static unsigned long rgb(int r, int g, int b) {
-    XColor c;
-    c.red = (unsigned short)(r << 8);
-    c.green = (unsigned short)(g << 8);
-    c.blue = (unsigned short)(b << 8);
-    c.flags = DoRed | DoGreen | DoBlue;
-    if (!XAllocColor(dpy, cmap, &c))
-        return BlackPixel(dpy, screen);
-    return c.pixel;
-}
+static void invalidate_static(void);
+static void free_buffers(void);
+static void ensure_buffers(void);
+static void rebuild_static_layer(void);
+static void present_buffer(void);
+static XRenderColor render_rgb(int r, int g, int b);
+static unsigned long rgb(int r, int g, int b);
 
 static XRenderColor render_rgb(int r, int g, int b) {
     XRenderColor c;
@@ -137,6 +157,78 @@ static XRenderColor render_rgb(int r, int g, int b) {
     c.blue = (unsigned short)(b * 257);
     c.alpha = 0xffff;
     return c;
+}
+
+static unsigned long rgb(int r, int g, int b) {
+    for (int i = 0; i < n_color_cache; i++) {
+        if (color_cache[i].r == r && color_cache[i].g == g && color_cache[i].b == b)
+            return color_cache[i].pix;
+    }
+    XColor c;
+    c.red = (unsigned short)(r << 8);
+    c.green = (unsigned short)(g << 8);
+    c.blue = (unsigned short)(b << 8);
+    c.flags = DoRed | DoGreen | DoBlue;
+    unsigned long pix = BlackPixel(dpy, screen);
+    if (XAllocColor(dpy, cmap, &c))
+        pix = c.pixel;
+    if (n_color_cache < COLOR_CACHE_MAX) {
+        color_cache[n_color_cache].r = r;
+        color_cache[n_color_cache].g = g;
+        color_cache[n_color_cache].b = b;
+        color_cache[n_color_cache].pix = pix;
+        n_color_cache++;
+    }
+    return pix;
+}
+
+static void init_palette(void) {
+    pix_bg = rgb(30, 46, 76);
+    pix_line = rgb(100, 170, 220);
+    pix_ctx_bg = rgb(45, 55, 72);
+    pix_ctx_border = rgb(120, 140, 170);
+    XRenderColor rc = render_rgb(255, 255, 255);
+    xft_white_ok = XftColorAllocValue(dpy, visual, cmap, &rc, &xft_white);
+}
+
+static void mark_dirty(void) {
+    frame_dirty = 1;
+}
+
+static void invalidate_static(void) {
+    static_valid = 0;
+}
+
+static void free_buffers(void) {
+    if (buf_pm) {
+        XFreePixmap(dpy, buf_pm);
+        buf_pm = 0;
+    }
+    if (static_pm) {
+        XFreePixmap(dpy, static_pm);
+        static_pm = 0;
+    }
+    if (buf_gc) {
+        XFreeGC(dpy, buf_gc);
+        buf_gc = 0;
+    }
+    buf_w = buf_h = 0;
+    static_valid = 0;
+}
+
+static void ensure_buffers(void) {
+    if (win_w < 1 || win_h < 1)
+        return;
+    if (buf_pm && buf_w == win_w && buf_h == win_h)
+        return;
+    free_buffers();
+    int depth = DefaultDepth(dpy, screen);
+    buf_pm = XCreatePixmap(dpy, start_win, win_w, win_h, depth);
+    static_pm = XCreatePixmap(dpy, start_win, win_w, win_h, depth);
+    buf_gc = XCreateGC(dpy, buf_pm, 0, NULL);
+    buf_w = win_w;
+    buf_h = win_h;
+    static_valid = 0;
 }
 
 static double now_ms(void) {
@@ -164,21 +256,35 @@ static int text_baseline(int height, XftFont *font) {
     return (height + font->ascent - font->descent) / 2;
 }
 
+static Drawable draw_dst;
+
 static void xft_draw(Drawable draw, XftFont *font, int x, int y,
         const char *text, int r, int g, int b) {
     if (!font || !text || !text[0])
         return;
-    XftDraw *xd = XftDrawCreate(dpy, draw, visual, cmap);
-    if (!xd)
-        return;
-    XftColor col;
-    XRenderColor rc = render_rgb(r, g, b);
-    if (XftColorAllocValue(dpy, visual, cmap, &rc, &col)) {
-        XftDrawStringUtf8(xd, &col, font, x, y,
-            (FcChar8 *)text, (int)strlen(text));
-        XftColorFree(dpy, visual, cmap, &col);
+    if (!xft_dc || draw != draw_dst) {
+        if (xft_dc)
+            XftDrawDestroy(xft_dc);
+        xft_dc = XftDrawCreate(dpy, draw, visual, cmap);
+        draw_dst = draw;
     }
-    XftDrawDestroy(xd);
+    XftColor col;
+    const XftColor *use = &xft_white;
+    if (r != 255 || g != 255 || b != 255) {
+        XRenderColor rc = render_rgb(r, g, b);
+        if (!XftColorAllocValue(dpy, visual, cmap, &rc, &col))
+            return;
+        use = &col;
+    } else if (!xft_white_ok) {
+        XRenderColor rc = render_rgb(255, 255, 255);
+        if (!XftColorAllocValue(dpy, visual, cmap, &rc, &col))
+            return;
+        use = &col;
+    }
+    XftDrawStringUtf8(xft_dc, use, font, x, y,
+        (FcChar8 *)text, (int)strlen(text));
+    if (use != &xft_white)
+        XftColorFree(dpy, visual, cmap, &col);
 }
 
 static void app_color(AppEntry *a) {
@@ -222,24 +328,30 @@ static void hide_menu(void) {
     ctx_visible = 0;
     open_anim = 0.0;
     layout_animating = 0;
+    frame_dirty = 0;
     XUnmapWindow(dpy, start_win);
     visible = 0;
     scroll_y = 0;
+    invalidate_static();
     set_open(0);
 }
 
 static void begin_open_animation(void) {
     open_anim = 0.0;
     clock_gettime(CLOCK_MONOTONIC, &open_anim_start);
+    clock_gettime(CLOCK_MONOTONIC, &last_tick);
     layout_home();
-    for (int s = 0; s < n_tile_order; s++) {
-        int ti = tile_order[s];
-        Tile *t = &home_tiles[ti];
+    for (int i = 0; i < n_home_tiles; i++) {
+        Tile *t = &home_tiles[i];
+        open_start_y[i] = t->layout_y + OPEN_FLYIN;
         t->anim_x = t->layout_x;
-        t->anim_y = t->layout_y + 120;
+        t->anim_y = open_start_y[i];
         t->anim_w = t->layout_w;
         t->anim_h = t->layout_h;
     }
+    layout_animating = 0;
+    invalidate_static();
+    mark_dirty();
 }
 
 static void show_menu(void) {
@@ -440,6 +552,7 @@ static void add_tile(const char *id, const char *label,
     t->act = act;
     t->is_wide = is_wide;
     t->pinned = pinned;
+    t->fill_pixel = rgb(cr, cg, cb);
     if (exec)
         strncpy(t->exec_cmd, exec, sizeof(t->exec_cmd) - 1);
     else
@@ -614,13 +727,59 @@ static int animating_now(void) {
         return 1;
     if (dragging)
         return 1;
+    if (frame_dirty)
+        return 1;
     return 0;
+}
+
+static int smooth_step(int cur, int target, double k) {
+    if (cur == target)
+        return cur;
+    return cur + (int)((target - cur) * k + (target > cur ? 0.5 : -0.5));
+}
+
+static void smooth_tiles(double dt_ms) {
+    double k = 1.0 - exp(-dt_ms / SMOOTH_TAU_MS);
+    if (k < 0.08)
+        k = 0.08;
+    if (k > 1.0)
+        k = 1.0;
+    int moving = 0;
+    for (int i = 0; i < n_home_tiles; i++) {
+        Tile *t = &home_tiles[i];
+        if (dragging && i == drag_tile_idx)
+            continue;
+        int nx = smooth_step(t->anim_x, t->layout_x, k);
+        int ny = smooth_step(t->anim_y, t->layout_y, k);
+        int nw = smooth_step(t->anim_w, t->layout_w, k);
+        int nh = smooth_step(t->anim_h, t->layout_h, k);
+        if (nx != t->layout_x || ny != t->layout_y ||
+            nw != t->layout_w || nh != t->layout_h)
+            moving = 1;
+        t->anim_x = nx;
+        t->anim_y = ny;
+        t->anim_w = nw;
+        t->anim_h = nh;
+    }
+    if (!moving)
+        layout_animating = 0;
+    else
+        layout_animating = 1;
 }
 
 static void tick_animations(void) {
     if (!visible)
         return;
-    int need_draw = 0;
+
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    double dt = (now.tv_sec - last_tick.tv_sec) * 1000.0 +
+        (now.tv_nsec - last_tick.tv_nsec) / 1000000.0;
+    if (dt < 0.0)
+        dt = 0.0;
+    if (dt > 50.0)
+        dt = 50.0;
+    last_tick = now;
 
     if (open_anim < 1.0) {
         double elapsed = now_ms() - (open_anim_start.tv_sec * 1000.0 +
@@ -629,58 +788,28 @@ static void tick_animations(void) {
         if (open_anim > 1.0)
             open_anim = 1.0;
         double e = ease_out_cubic(open_anim);
-        for (int s = 0; s < n_tile_order; s++) {
-            Tile *t = &home_tiles[tile_order[s]];
-            int start_y = t->layout_y + 120;
-            t->anim_y = lerp_i(start_y, t->layout_y, e);
+        for (int i = 0; i < n_home_tiles; i++) {
+            Tile *t = &home_tiles[i];
             t->anim_x = t->layout_x;
+            t->anim_y = lerp_i(open_start_y[i], t->layout_y, e);
             t->anim_w = t->layout_w;
             t->anim_h = t->layout_h;
         }
-        need_draw = 1;
+        mark_dirty();
+    } else if (layout_animating) {
+        smooth_tiles(dt);
+        mark_dirty();
     }
 
-    if (layout_animating) {
-        double elapsed = now_ms() - (layout_anim_start.tv_sec * 1000.0 +
-            layout_anim_start.tv_nsec / 1000000.0);
-        double t = elapsed / ANIM_MS_MOVE;
-        if (t > 1.0)
-            t = 1.0;
-        double e = ease_out_cubic(t);
-        int done = 1;
-        for (int i = 0; i < n_home_tiles; i++) {
-            Tile *tile = &home_tiles[i];
-            if (dragging && i == drag_tile_idx)
-                continue;
-            if (tile->anim_x != tile->layout_x || tile->anim_y != tile->layout_y ||
-                tile->anim_w != tile->layout_w || tile->anim_h != tile->layout_h) {
-                tile->anim_x = lerp_i(tile->anim_x, tile->layout_x, e);
-                tile->anim_y = lerp_i(tile->anim_y, tile->layout_y, e);
-                tile->anim_w = lerp_i(tile->anim_w, tile->layout_w, e);
-                tile->anim_h = lerp_i(tile->anim_h, tile->layout_h, e);
-                done = 0;
-            }
-        }
-        if (t >= 1.0 || done) {
-            layout_animating = 0;
-            for (int i = 0; i < n_home_tiles; i++) {
-                Tile *tile = &home_tiles[i];
-                tile->anim_x = tile->layout_x;
-                tile->anim_y = tile->layout_y;
-                tile->anim_w = tile->layout_w;
-                tile->anim_h = tile->layout_h;
-            }
-        }
-        need_draw = 1;
-    }
-
-    if (need_draw)
+    if (frame_dirty) {
         draw_all();
+        frame_dirty = 0;
+    }
 }
 
 static void start_layout_animation(void) {
     layout_animating = 1;
-    clock_gettime(CLOCK_MONOTONIC, &layout_anim_start);
+    mark_dirty();
 }
 
 static int slot_at_content_xy_order(const int *order, int n_order, int cx, int cy) {
@@ -761,6 +890,7 @@ static void reorder_tile(int from_slot, int to_slot) {
         return;
     move_slot(tile_order, n_tile_order, from_slot, to_slot);
     layout_home();
+    invalidate_static();
     start_layout_animation();
     save_layout();
 }
@@ -832,29 +962,29 @@ static void load_wallpaper(void) {
     wallpaper_ready = wallpaper_pm != 0;
 }
 
-static void draw_bg(void) {
-    XSetForeground(dpy, gc, rgb(30, 46, 76));
-    XFillRectangle(dpy, start_win, gc, 0, 0, win_w, win_h);
+static void draw_bg(Drawable dst, GC g) {
+    XSetForeground(dpy, g, pix_bg);
+    XFillRectangle(dpy, dst, g, 0, 0, win_w, win_h);
 }
 
-static void draw_tile_glyph(const Tile *t, int sx, int sy, int sw, int sh) {
+static void draw_tile_glyph(Drawable dst, GC g, const Tile *t, int sx, int sy, int sw, int sh) {
     if (t->act == ACT_DESKTOP && wallpaper_ready) {
-        XCopyArea(dpy, wallpaper_pm, start_win, gc,
+        XCopyArea(dpy, wallpaper_pm, dst, g,
             0, 0, t->w, t->h, sx, sy);
         return;
     }
-    XSetForeground(dpy, gc, rgb(t->cr, t->cg, t->cb));
-    XFillRectangle(dpy, start_win, gc, sx, sy, sw, sh);
+    XSetForeground(dpy, g, t->fill_pixel);
+    XFillRectangle(dpy, dst, g, sx, sy, sw, sh);
 
     if (t->act == ACT_TERMINAL) {
-        xft_draw(start_win, ui_font, sx + sw / 2 - 18, sy + sh / 2 + 6,
+        xft_draw(dst, ui_font, sx + sw / 2 - 18, sy + sh / 2 + 6,
             ">_", 255, 255, 255);
     } else if (t->letter) {
         char s[2] = { t->letter, 0 };
         if (ui_font) {
             XGlyphInfo ext;
             XftTextExtentsUtf8(dpy, ui_font, (FcChar8 *)s, 1, &ext);
-            xft_draw(start_win, ui_font,
+            xft_draw(dst, ui_font,
                 sx + (sw - ext.xOff) / 2,
                 sy + text_baseline(sh, ui_font),
                 s, 255, 255, 255);
@@ -862,13 +992,27 @@ static void draw_tile_glyph(const Tile *t, int sx, int sy, int sw, int sh) {
     }
 }
 
-static void draw_tile_label(const Tile *t, int sx, int sy, int sh) {
-    xft_draw(start_win, ui_font, sx + 8, sy + sh - 10, t->label, 255, 255, 255);
+static void draw_tile_label(Drawable dst, const Tile *t, int sx, int sy, int sh) {
+    xft_draw(dst, ui_font, sx + 8, sy + sh - 10, t->label, 255, 255, 255);
 }
 
-static void draw_home_section(void) {
+static int home_region_bottom(void) {
+    int y = home_h - scroll_y + TILE_GAP;
+    if (y > win_h)
+        y = win_h;
+    return y;
+}
+
+static void clear_home_band(Drawable dst, GC g) {
+    int top = 0;
+    int bot = home_region_bottom();
+    if (bot > top)
+        XFillRectangle(dpy, dst, g, 0, top, win_w, bot - top);
+}
+
+static void draw_home_section(Drawable dst, GC g) {
     if (header_font)
-        xft_draw(start_win, header_font, MARGIN, MARGIN + header_font->ascent,
+        xft_draw(dst, header_font, MARGIN, MARGIN + header_font->ascent,
             "Home", 255, 255, 255);
 
     for (int s = 0; s < n_tile_order; s++) {
@@ -890,24 +1034,24 @@ static void draw_home_section(void) {
         int sy = ay - scroll_y;
         if (sy + ah < 0 || sy > win_h)
             continue;
-        draw_tile_glyph(t, ax, sy, aw, ah);
-        draw_tile_label(t, ax, sy, ah);
+        draw_tile_glyph(dst, g, t, ax, sy, aw, ah);
+        draw_tile_label(dst, t, ax, sy, ah);
     }
 }
 
-static void draw_apps_section(void) {
+static void draw_apps_section(Drawable dst, GC g) {
     int base_y = home_h - scroll_y;
     if (base_y > win_h)
         return;
 
     if (header_font)
-        xft_draw(start_win, header_font, MARGIN, base_y + header_font->ascent,
+        xft_draw(dst, header_font, MARGIN, base_y + header_font->ascent,
             "Apps", 255, 255, 255);
 
-    XSetForeground(dpy, gc, rgb(100, 170, 220));
+    XSetForeground(dpy, g, pix_line);
     int line_y = base_y + HEADER_H - 8;
     if (line_y >= 0 && line_y < win_h)
-        XDrawLine(dpy, start_win, gc, MARGIN, line_y, win_w - MARGIN, line_y);
+        XDrawLine(dpy, dst, g, MARGIN, line_y, win_w - MARGIN, line_y);
 
     if (apps_cols < 1)
         apps_cols = 1;
@@ -921,23 +1065,23 @@ static void draw_apps_section(void) {
             continue;
 
         const AppEntry *a = &apps[i];
-        XSetForeground(dpy, gc, rgb(a->cr, a->cg, a->cb));
-        XFillRectangle(dpy, start_win, gc, ax, ay, APP_ICON, APP_ICON);
+        XSetForeground(dpy, g, rgb(a->cr, a->cg, a->cb));
+        XFillRectangle(dpy, dst, g, ax, ay, APP_ICON, APP_ICON);
         char s[2] = { a->letter, 0 };
         if (ui_font) {
             XGlyphInfo ext;
             XftTextExtentsUtf8(dpy, ui_font, (FcChar8 *)s, 1, &ext);
-            xft_draw(start_win, ui_font,
+            xft_draw(dst, ui_font,
                 ax + (APP_ICON - ext.xOff) / 2,
                 ay + text_baseline(APP_ICON, ui_font),
                 s, 255, 255, 255);
         }
-        xft_draw(start_win, ui_font, ax + APP_ICON + 12,
+        xft_draw(dst, ui_font, ax + APP_ICON + 12,
             ay + text_baseline(APP_ROW_H, ui_font), a->name, 255, 255, 255);
     }
 }
 
-static void draw_context_menu(void) {
+static void draw_context_menu(Drawable dst, GC g) {
     if (!ctx_visible)
         return;
     int mx = ctx_x;
@@ -947,44 +1091,84 @@ static void draw_context_menu(void) {
     if (mx + CTX_W > win_w)
         mx = win_w - CTX_W - 4;
 
-    XSetForeground(dpy, gc, rgb(45, 55, 72));
-    XFillRectangle(dpy, start_win, gc, mx, my, CTX_W, CTX_H);
-    XSetForeground(dpy, gc, rgb(120, 140, 170));
-    XDrawRectangle(dpy, start_win, gc, mx, my, CTX_W - 1, CTX_H - 1);
-    xft_draw(start_win, ui_font, mx + 12, my + text_baseline(CTX_H, ui_font),
+    XSetForeground(dpy, g, pix_ctx_bg);
+    XFillRectangle(dpy, dst, g, mx, my, CTX_W, CTX_H);
+    XSetForeground(dpy, g, pix_ctx_border);
+    XDrawRectangle(dpy, dst, g, mx, my, CTX_W - 1, CTX_H - 1);
+    xft_draw(dst, ui_font, mx + 12, my + text_baseline(CTX_H, ui_font),
         "Pin to Start", 255, 255, 255);
+}
+
+static void rebuild_static_layer(void) {
+    ensure_buffers();
+    if (!static_pm)
+        return;
+    layout_content();
+    draw_bg(static_pm, buf_gc);
+    draw_apps_section(static_pm, buf_gc);
+    static_valid = 1;
+    static_scroll = scroll_y;
+}
+
+static void present_buffer(void) {
+    if (!buf_pm)
+        return;
+    XCopyArea(dpy, buf_pm, start_win, gc, 0, 0, win_w, win_h, 0, 0);
+    XRaiseWindow(dpy, start_win);
+    XFlush(dpy);
 }
 
 static void draw_all(void) {
     if (!visible)
         return;
+
     XWindowAttributes ra;
     XGetWindowAttributes(dpy, root, &ra);
-    root_h = ra.height;
-    win_w = ra.width;
-    win_h = root_h;
-    XMoveResizeWindow(dpy, start_win, 0, 0, win_w, win_h);
+    if (ra.width != win_w || ra.height != root_h) {
+        root_h = ra.height;
+        win_w = ra.width;
+        win_h = root_h;
+        XMoveResizeWindow(dpy, start_win, 0, 0, win_w, win_h);
+        invalidate_static();
+        free_buffers();
+    }
+
+    ensure_buffers();
+    if (!buf_pm)
+        return;
 
     if (dragging)
         preview_order_with_drag(drag_hover_slot);
     else
         layout_content();
 
-    if (!dragging && !layout_animating && open_anim >= 1.0) {
-        for (int i = 0; i < n_home_tiles; i++) {
-            Tile *t = &home_tiles[i];
-            t->anim_x = t->layout_x;
-            t->anim_y = t->layout_y;
-            t->anim_w = t->layout_w;
-            t->anim_h = t->layout_h;
+    int fast = (open_anim < 1.0 || layout_animating || dragging) &&
+        static_valid && static_scroll == scroll_y;
+
+    if (!fast || !static_valid || static_scroll != scroll_y)
+        rebuild_static_layer();
+
+    if (fast) {
+        XCopyArea(dpy, static_pm, buf_pm, buf_gc, 0, 0, win_w, win_h, 0, 0);
+        clear_home_band(buf_pm, buf_gc);
+        draw_home_section(buf_pm, buf_gc);
+        draw_context_menu(buf_pm, buf_gc);
+    } else {
+        XCopyArea(dpy, static_pm, buf_pm, buf_gc, 0, 0, win_w, win_h, 0, 0);
+        draw_home_section(buf_pm, buf_gc);
+        draw_context_menu(buf_pm, buf_gc);
+        if (!dragging && !layout_animating && open_anim >= 1.0) {
+            for (int i = 0; i < n_home_tiles; i++) {
+                Tile *t = &home_tiles[i];
+                t->anim_x = t->layout_x;
+                t->anim_y = t->layout_y;
+                t->anim_w = t->layout_w;
+                t->anim_h = t->layout_h;
+            }
         }
     }
 
-    draw_bg();
-    draw_home_section();
-    draw_apps_section();
-    draw_context_menu();
-    XRaiseWindow(dpy, start_win);
+    present_buffer();
 }
 
 static int tile_index_at_content(int cx, int cy) {
@@ -1079,13 +1263,16 @@ static void pin_app(int app_idx) {
     if (n_tile_order < MAX_HOME_TILES)
         tile_order[n_tile_order++] = idx;
     Tile *t = &home_tiles[idx];
+    layout_home();
+    open_start_y[idx] = t->layout_y + OPEN_FLYIN;
     t->anim_x = t->layout_x;
-    t->anim_y = t->layout_y + 80;
+    t->anim_y = open_start_y[idx];
     t->anim_w = t->layout_w;
     t->anim_h = t->layout_h;
-    layout_home();
+    invalidate_static();
     start_layout_animation();
     save_layout();
+    mark_dirty();
     draw_all();
 }
 
@@ -1143,6 +1330,8 @@ static void handle_scroll(int dir) {
     int step = APP_ROW_H + APP_GAP;
     scroll_y += dir * step;
     layout_content();
+    invalidate_static();
+    mark_dirty();
     draw_all();
 }
 
@@ -1153,6 +1342,8 @@ static void resize_to_root(void) {
     win_w = ra.width;
     win_h = root_h;
     XMoveResizeWindow(dpy, start_win, 0, 0, win_w, win_h);
+    invalidate_static();
+    free_buffers();
     if (visible)
         draw_all();
 }
@@ -1227,12 +1418,14 @@ static void end_drag(int px, int py) {
     }
     if (from_slot >= 0 && hover >= 0 && hover != from_slot)
         reorder_tile(from_slot, hover);
-    else
+    else {
         layout_home();
+        invalidate_static();
+    }
     dragging = 0;
     drag_tile_idx = -1;
     start_layout_animation();
-    draw_all();
+    mark_dirty();
 }
 
 static void update_drag(int px, int py) {
@@ -1246,10 +1439,10 @@ static void update_drag(int px, int py) {
         hover = drag_hover_slot;
     if (hover != drag_hover_slot) {
         drag_hover_slot = hover;
-        layout_animating = 1;
-        clock_gettime(CLOCK_MONOTONIC, &layout_anim_start);
+        preview_order_with_drag(hover);
+        start_layout_animation();
     }
-    draw_all();
+    mark_dirty();
 }
 
 int main(void) {
@@ -1272,6 +1465,7 @@ int main(void) {
     set_open(0);
 
     open_fonts();
+    init_palette();
     load_apps();
     load_layout();
 
@@ -1281,7 +1475,7 @@ int main(void) {
     win_w = ra.width;
     win_h = root_h - PANEL_H;
 
-    start_win = XCreateSimpleWindow(dpy, root, 0, 0, win_w, win_h, 0, 0, rgb(30, 46, 76));
+    start_win = XCreateSimpleWindow(dpy, root, 0, 0, win_w, win_h, 0, 0, pix_bg);
     XSetWindowAttributes attr;
     attr.override_redirect = True;
     attr.event_mask = ExposureMask | StructureNotifyMask | ButtonPressMask |
@@ -1289,6 +1483,7 @@ int main(void) {
     XChangeWindowAttributes(dpy, start_win, CWOverrideRedirect | CWEventMask, &attr);
     gc = XCreateGC(dpy, start_win, 0, NULL);
     load_wallpaper();
+    clock_gettime(CLOCK_MONOTONIC, &last_tick);
     XUnmapWindow(dpy, start_win);
     visible = 0;
 
@@ -1296,7 +1491,7 @@ int main(void) {
 
     int xfd = ConnectionNumber(dpy);
     while (1) {
-        int tick = visible && animating_now();
+        int tick = visible && (animating_now() || frame_dirty);
         fd_set fds;
         FD_ZERO(&fds);
         FD_SET(xfd, &fds);
