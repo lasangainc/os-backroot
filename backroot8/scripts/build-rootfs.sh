@@ -26,7 +26,7 @@ trap cleanup_mounts EXIT
 
 log "Preparing branding assets..."
 "$ROOT/scripts/prepare-bootscreen.sh"
-python3 "$ROOT/scripts/png-to-neoemblem.py" "$ROOT/assets/taskbar-emblem.png" "$ROOT/assets/neoemblem.txt"
+python3 "$ROOT/scripts/prepare-neoemblem.py" "$ROOT/assets/neoemblem-source.txt" "$ROOT/assets/neoemblem.txt"
 make -C "$ROOT/src/br8-panel" emblem.h
 
 log "Building binaries..."
