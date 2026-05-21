@@ -36,7 +36,8 @@ fi
 if [[ -f "$PIDFILE" ]]; then
     OLD_PID="$(cat "$PIDFILE")"
     STAT="$(ps -p "$OLD_PID" -o stat= 2>/dev/null || true)"
-    if [[ -n "$STAT" && "$STAT" != Z* ]]; then
+    COMM="$(ps -p "$OLD_PID" -o comm= 2>/dev/null || true)"
+    if [[ -n "$STAT" && "$STAT" != Z* && "$COMM" == *qemu-system* ]]; then
         echo "QEMU already running (PID $OLD_PID)"
         echo "VNC: localhost:${VNC_PORT} (display ${VNC_DISPLAY})"
         exit 0
