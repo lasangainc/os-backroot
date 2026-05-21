@@ -94,7 +94,7 @@ pacman -S --noconfirm --needed \
     linux linux-firmware \
     base base-devel \
     xorg-server xorg-xinit xorg-xrandr xf86-video-vesa \
-    xterm dolphin feh fbida nettle xorg-fonts-misc libxft ttf-dejavu x11vnc unzip \
+    xterm dolphin feh fbida nettle xorg-fonts-misc libxft ttf-dejavu x11vnc unzip librsvg \
     systemd-sysvcompat \
     sudo networkmanager \
     mkinitcpio grub efibootmgr \
