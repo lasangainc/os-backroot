@@ -26,6 +26,7 @@ trap cleanup_mounts EXIT
 
 log "Preparing branding assets..."
 "$ROOT/scripts/prepare-bootscreen.sh"
+python3 "$ROOT/scripts/prepare-neoemblem.py" "$ROOT/assets/neoemblem-source.txt" "$ROOT/assets/neoemblem.txt"
 make -C "$ROOT/src/br8-panel" emblem.h
 
 log "Building binaries..."
@@ -172,6 +173,15 @@ sudo install -Dm755 "$ROOT/rootfs-overlay/usr/share/backroot8/show-splash.sh" \
 sudo install -Dm755 "$ROOT/rootfs-overlay/usr/share/backroot8/br8-panel-launcher.sh" \
     "$MNT/usr/share/backroot8/br8-panel-launcher.sh"
 sudo install -Dm644 "$ROOT/rootfs-overlay/etc/profile.d/backroot8.sh" "$MNT/etc/profile.d/backroot8.sh"
+sudo install -Dm644 "$ROOT/rootfs-overlay/etc/profile.d/backroot8-neofetch.sh" \
+    "$MNT/etc/profile.d/backroot8-neofetch.sh"
+sudo install -Dm644 "$ROOT/rootfs-overlay/etc/os-release" "$MNT/etc/os-release"
+sudo install -Dm644 "$ROOT/rootfs-overlay/etc/os-release" "$MNT/usr/lib/os-release"
+sudo install -Dm644 "$ROOT/assets/neoemblem.txt" "$MNT/usr/share/backroot8/neoemblem.txt"
+sudo install -Dm644 "$ROOT/rootfs-overlay/etc/neofetch/config.conf" "$MNT/etc/neofetch/config.conf"
+sudo mkdir -p "$MNT/root/.config/neofetch"
+sudo install -Dm644 "$ROOT/rootfs-overlay/etc/neofetch/config.conf" "$MNT/root/.config/neofetch/config.conf"
+sudo install -Dm755 "$ROOT/rootfs-overlay/usr/local/bin/neofetch" "$MNT/usr/local/bin/neofetch"
 sudo install -Dm644 "$ROOT/rootfs-overlay/etc/motd" "$MNT/etc/motd"
 sudo install -Dm644 "$ROOT/rootfs-overlay/etc/systemd/system/backroot8-desktop.service" \
     "$MNT/etc/systemd/system/backroot8-desktop.service"

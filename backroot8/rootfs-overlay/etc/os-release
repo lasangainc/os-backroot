@@ -1,0 +1,8 @@
+NAME="Backroot"
+PRETTY_NAME="Backroot 8 Pre-release"
+ID=backroot8
+ID_LIKE=arch
+VERSION_ID=8-pre
+VERSION="8 Pre-release"
+HOME_URL="https://github.com/lasangainc/os-backroot"
+LOGO=backroot8
