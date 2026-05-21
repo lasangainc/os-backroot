@@ -2,6 +2,11 @@
  * Backroot 8 start menu — GTK4 + CSS, Windows 8–style tile grid
  */
 #include <gtk/gtk.h>
+#ifdef GDK_WINDOWING_X11
+#include <gdk/x11/gdkx.h>
+#include <X11/Xlib.h>
+#include <X11/Xatom.h>
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -145,6 +150,7 @@ static GtkWidget *make_tile_button(AppState *st, const PinnedTile *def) {
     gtk_widget_add_css_class(btn, "tile");
     gtk_widget_add_css_class(btn, def->large ? "tile-large" : "tile-small");
     gtk_widget_add_css_class(btn, "tile-fly");
+    gtk_widget_add_css_class(btn, "animating");
     if (def->large && !def->color)
         gtk_widget_add_css_class(btn, "tile-desktop");
     gtk_widget_set_size_request(btn, w, h);
@@ -366,6 +372,8 @@ static GtkWidget *build_apps_page(void) {
 
     outer = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
     gtk_widget_add_css_class(outer, "apps-overlay");
+    gtk_widget_set_hexpand(outer, TRUE);
+    gtk_widget_set_vexpand(outer, TRUE);
 
     header = gtk_label_new("Home");
     gtk_widget_add_css_class(header, "apps-header");
@@ -466,9 +474,13 @@ static void show_menu(AppState *st) {
     st->visible = TRUE;
     set_apps_mode(st, FALSE);
 
-    if (st->tiles_page)
+    if (st->tiles_page) {
         gtk_widget_remove_css_class(st->tiles_page, "visible");
+        gtk_widget_add_css_class(st->tiles_page, "visible");
+    }
+
     gtk_widget_set_visible(st->window, TRUE);
+    gtk_window_fullscreen(GTK_WINDOW(st->window));
     gtk_window_present(GTK_WINDOW(st->window));
 
     for (GList *l = st->fly_tiles; l; l = l->next)
@@ -667,6 +679,9 @@ static GtkWidget *build_tiles_page(AppState *st) {
 
     page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
     gtk_widget_add_css_class(page, "start-overlay");
+    gtk_widget_add_css_class(page, "animating");
+    gtk_widget_set_hexpand(page, TRUE);
+    gtk_widget_set_vexpand(page, TRUE);
 
     top = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
     gtk_widget_set_hexpand(top, TRUE);
@@ -714,6 +729,41 @@ static GtkWidget *build_tiles_page(AppState *st) {
     return page;
 }
 
+static void on_window_realize(GtkWidget *widget, gpointer user_data) {
+#ifdef GDK_WINDOWING_X11
+    GdkDisplay *gdpy;
+    GdkSurface *surface;
+    Display *xdpy;
+    Window xwin;
+    XClassHint hint;
+    Atom wtype;
+    Atom splash;
+
+    (void)user_data;
+    gdpy = gtk_widget_get_display(widget);
+    if (!GDK_IS_X11_DISPLAY(gdpy))
+        return;
+
+    surface = gtk_native_get_surface(GTK_NATIVE(widget));
+    if (!surface)
+        return;
+
+    xdpy = gdk_x11_display_get_xdisplay(gdpy);
+    xwin = gdk_x11_surface_get_xid(surface);
+    hint.res_name = "br8-start-menu";
+    hint.res_class = "br8-start-menu";
+    XSetClassHint(xdpy, xwin, &hint);
+
+    wtype = XInternAtom(xdpy, "_NET_WM_WINDOW_TYPE", False);
+    splash = XInternAtom(xdpy, "_NET_WM_WINDOW_TYPE_SPLASH", False);
+    XChangeProperty(xdpy, xwin, wtype, XA_ATOM, 32, PropModeReplace,
+        (unsigned char *)&splash, 1);
+#else
+    (void)widget;
+    (void)user_data;
+#endif
+}
+
 static void activate(GtkApplication *app, gpointer user_data) {
     AppState *st = user_data;
     GtkWidget *apps_page;
@@ -721,13 +771,17 @@ static void activate(GtkApplication *app, gpointer user_data) {
 
     st->app = app;
     st->window = gtk_application_window_new(app);
-    gtk_window_set_title(GTK_WINDOW(st->window), "Start");
+    gtk_window_set_title(GTK_WINDOW(st->window), "");
+    gtk_widget_set_name(st->window, "br8-start-menu");
     gtk_widget_add_css_class(st->window, "start-menu");
     gtk_window_set_decorated(GTK_WINDOW(st->window), FALSE);
     gtk_window_fullscreen(GTK_WINDOW(st->window));
     gtk_widget_set_visible(st->window, FALSE);
+    g_signal_connect(st->window, "realize", G_CALLBACK(on_window_realize), NULL);
 
     st->root_stack = gtk_stack_new();
+    gtk_widget_set_hexpand(st->root_stack, TRUE);
+    gtk_widget_set_vexpand(st->root_stack, TRUE);
     gtk_stack_set_transition_type(GTK_STACK(st->root_stack), GTK_STACK_TRANSITION_TYPE_CROSSFADE);
     gtk_stack_set_transition_duration(GTK_STACK(st->root_stack), 200);
 
@@ -785,6 +839,7 @@ int main(int argc, char **argv) {
     }
 
     memset(&g_state, 0, sizeof g_state);
+    g_set_prgname("br8-start-menu");
 
     app = gtk_application_new(APP_ID, G_APPLICATION_NON_UNIQUE);
     g_signal_connect(app, "startup", G_CALLBACK(on_startup), NULL);

@@ -701,10 +701,37 @@ static void restore_client(Client *c) {
     raise_client(c);
 }
 
+static int is_unmanaged_app(Window w) {
+    XClassHint hint;
+    if (!XGetClassHint(dpy, w, &hint))
+        return 0;
+    int skip = 0;
+    if (hint.res_class && strstr(hint.res_class, "br8-start-menu"))
+        skip = 1;
+    if (hint.res_name && strstr(hint.res_name, "br8-start-menu"))
+        skip = 1;
+    if (hint.res_class && strstr(hint.res_class, "io.backroot.startmenu"))
+        skip = 1;
+    if (hint.res_name)
+        XFree(hint.res_name);
+    if (hint.res_class)
+        XFree(hint.res_class);
+    return skip;
+}
+
+static void map_unmanaged(Window w) {
+    XMapWindow(dpy, w);
+    XRaiseWindow(dpy, w);
+    XSetInputFocus(dpy, w, RevertToParent, CurrentTime);
+    XFlush(dpy);
+}
+
 static void add_client(Window w) {
     if (nclients >= 256)
         return;
     if (is_our_chrome(w))
+        return;
+    if (is_unmanaged_app(w))
         return;
 
     XWindowAttributes wa;
@@ -799,6 +826,11 @@ static void handle_map_request(XMapRequestEvent *e) {
     if (is_our_chrome(w)) {
         /* Never wrap our own frames/decorations (fixes stacked title bars). */
         XMapWindow(dpy, w);
+        return;
+    }
+
+    if (is_unmanaged_app(w)) {
+        map_unmanaged(w);
         return;
     }
 

@@ -1,7 +1,7 @@
 /* Backroot 8 — Windows 8–style start menu */
 
 window.start-menu {
-    background-color: transparent;
+    background-color: #1a2a3a;
 }
 
 .start-overlay {
@@ -10,11 +10,15 @@ window.start-menu {
         radial-gradient(ellipse 55% 45% at 12% 18%, rgba(90, 120, 160, 0.22) 0%, transparent 70%),
         radial-gradient(ellipse 50% 40% at 88% 72%, rgba(70, 100, 140, 0.18) 0%, transparent 65%),
         radial-gradient(ellipse 40% 35% at 55% 45%, rgba(60, 90, 130, 0.12) 0%, transparent 60%);
+    opacity: 1;
+}
+
+.start-overlay.animating {
     opacity: 0;
     transition: opacity 380ms ease-out;
 }
 
-.start-overlay.visible {
+.start-overlay.animating.visible {
     opacity: 1;
 }
 
@@ -101,6 +105,11 @@ window.start-menu {
 }
 
 .tile-fly {
+    opacity: 1;
+    transform: translateX(0);
+}
+
+.tile-fly.animating {
     opacity: 0;
     transform: translateX(72px);
     transition:
@@ -108,7 +117,7 @@ window.start-menu {
         transform 480ms cubic-bezier(0.16, 0.84, 0.32, 1);
 }
 
-.tile-fly.revealed {
+.tile-fly.animating.revealed {
     opacity: 1;
     transform: translateX(0);
 }
