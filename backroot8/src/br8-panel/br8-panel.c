@@ -29,6 +29,7 @@
 #define TASK_GAP 6
 #define MAX_TASKS 48
 #define MAX_DESKTOP_ICONS 256
+#define ICON_MAX_DIM 512
 
 typedef struct {
     char wm_class[128];
@@ -169,9 +170,51 @@ static unsigned long class_color(const char *s) {
     return rgba(r, g, b, 1.0);
 }
 
+static int ignore_xerror(Display *display, XErrorEvent *event) {
+    (void)display;
+    (void)event;
+    return 0;
+}
+
+static int window_alive(Window w) {
+    XWindowAttributes wa;
+    return w && XGetWindowAttributes(dpy, w, &wa);
+}
+
+static int client_in_frame(Window frame, Window client) {
+    Window root_ret, parent_ret;
+    Window *kids = NULL;
+    unsigned int nkids = 0;
+    int found = 0;
+
+    if (!XQueryTree(dpy, frame, &root_ret, &parent_ret, &kids, &nkids)) {
+        if (kids)
+            XFree(kids);
+        return 0;
+    }
+    for (unsigned int i = 0; i < nkids; i++) {
+        if (kids[i] == client) {
+            found = 1;
+            break;
+        }
+    }
+    if (kids)
+        XFree(kids);
+    return found;
+}
+
 static void free_tasks(void) {
     for (int i = 0; i < ntasks; i++) {
-        if (tasks[i].icon)
+        if (!tasks[i].icon)
+            continue;
+        int dup = 0;
+        for (int j = 0; j < i; j++) {
+            if (tasks[j].icon == tasks[i].icon) {
+                dup = 1;
+                break;
+            }
+        }
+        if (!dup)
             XFreePixmap(dpy, tasks[i].icon);
         tasks[i].icon = 0;
     }
@@ -545,6 +588,8 @@ static Pixmap icon_from_png_file(const char *path) {
 }
 
 static Pixmap icon_from_desktop(Window client) {
+    if (!window_alive(client))
+        return 0;
     char res_class[128] = "";
     char res_name[128] = "";
     XClassHint hint;
@@ -570,11 +615,24 @@ static Pixmap icon_from_desktop(Window client) {
     return 0;
 }
 
+static int icon_entry_fits(unsigned long off, int w, int h, unsigned long nitems) {
+    if (w <= 0 || h <= 0 || w > ICON_MAX_DIM || h > ICON_MAX_DIM)
+        return 0;
+    unsigned long psz = (unsigned long)w * (unsigned long)h;
+    unsigned long end = off + 2;
+    if (end > nitems || psz > nitems - end)
+        return 0;
+    return 1;
+}
+
 static Pixmap icon_from_net_wm(Window client) {
     unsigned long *prop = NULL;
     Atom actual;
     int fmt;
     unsigned long nitems = 0, bytes = 0;
+
+    if (!window_alive(client))
+        return 0;
 
     if (XGetWindowProperty(dpy, client, net_wm_icon, 0, 1024 * 1024, False,
             XA_CARDINAL, &actual, &fmt, &nitems, &bytes,
@@ -594,11 +652,9 @@ static Pixmap icon_from_net_wm(Window client) {
             break;
         int w = (int)prop[off];
         int h = (int)prop[off + 1];
-        if (w <= 0 || h <= 0)
+        if (!icon_entry_fits(off, w, h, nitems))
             break;
         unsigned long psz = (unsigned long)w * (unsigned long)h;
-        if (off + 2 + psz > nitems)
-            break;
         if (w >= ICON_SZ && h >= ICON_SZ) {
             if (!pick_w || w < pick_w || (w == pick_w && h < pick_h)) {
                 pick_w = w;
@@ -606,10 +662,14 @@ static Pixmap icon_from_net_wm(Window client) {
                 pick_off = off;
             }
         }
-        if (w * h > largest_w * largest_h) {
-            largest_w = w;
-            largest_h = h;
-            largest_off = off;
+        {
+            unsigned long area = (unsigned long)w * (unsigned long)h;
+            unsigned long best = (unsigned long)largest_w * (unsigned long)largest_h;
+            if (area > best) {
+                largest_w = w;
+                largest_h = h;
+                largest_off = off;
+            }
         }
         off += 2 + psz;
     }
@@ -631,6 +691,8 @@ static Pixmap icon_from_net_wm(Window client) {
 }
 
 static Pixmap icon_fallback(Window client) {
+    if (!window_alive(client))
+        return 0;
     char letter = '?';
     char label[64] = "App";
     XClassHint hint;
@@ -647,7 +709,13 @@ static Pixmap icon_fallback(Window client) {
     }
 
     Pixmap pm = XCreatePixmap(dpy, panel, ICON_SZ, ICON_SZ, DefaultDepth(dpy, screen));
+    if (!pm)
+        return 0;
     GC igc = XCreateGC(dpy, pm, 0, NULL);
+    if (!igc) {
+        XFreePixmap(dpy, pm);
+        return 0;
+    }
     XSetForeground(dpy, igc, class_color(label));
     XFillRectangle(dpy, pm, igc, 0, 0, ICON_SZ, ICON_SZ);
     XFreeGC(dpy, igc);
@@ -661,6 +729,12 @@ static Pixmap icon_fallback(Window client) {
 }
 
 static void get_client_label(Window client, char *buf, size_t n) {
+    if (!buf || n == 0)
+        return;
+    if (!window_alive(client)) {
+        strncpy(buf, "App", n);
+        return;
+    }
     unsigned char *data = NULL;
     Atom type;
     int fmt;
@@ -722,11 +796,15 @@ static void collect_tasks(void) {
             continue;
 
         Window frame = children[i];
+        if (!window_alive(frame))
+            continue;
+
         Window client = frame_client(frame);
-        if (!client)
+        if (!client || !window_alive(client) || !client_in_frame(frame, client))
             continue;
 
         TaskBtn *t = &tasks[ntasks++];
+        memset(t, 0, sizeof(*t));
         t->frame = frame;
         t->client = client;
         t->x = x;
@@ -809,6 +887,8 @@ static TaskBtn *task_at(int px) {
 }
 
 static void activate_task(TaskBtn *t) {
+    if (!t || !window_alive(t->frame))
+        return;
     /* Tell WM to restore (property is reliable; ClientMessage often is not). */
     XChangeProperty(dpy, root, br8_activate, XA_WINDOW, 32, PropModeReplace,
         (unsigned char *)&t->frame, 1);
@@ -885,7 +965,7 @@ int main(void) {
         }
     }
 
-    XSetErrorHandler(NULL);
+    XSetErrorHandler(ignore_xerror);
 
     br8_frame = XInternAtom(dpy, "_BR8_FRAME", False);
     br8_client = XInternAtom(dpy, "_BR8_CLIENT", False);
