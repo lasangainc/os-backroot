@@ -185,27 +185,74 @@ static char *current_timezone(void) {
     return out;
 }
 
-static void load_keymaps(StrList *sl) {
-    static const char *fallback[] = {
-        "us", "gb", "de", "fr", "es", "it", "pt", "ru", "jp", "pl", "se", "no", NULL,
-    };
-    FILE *fp = popen("localectl list-keymaps 2>/dev/null", "r");
-    char line[128];
+typedef struct {
+    const char *language;
+    const char *keymap;
+} KeyboardLang;
 
-    if (fp) {
-        while (fgets(line, sizeof line, fp)) {
-            char *nl = strchr(line, '\n');
-            if (nl)
-                *nl = '\0';
-            if (line[0] && strchr(line, ' ') == NULL)
-                strlist_add(sl, line);
-        }
-        pclose(fp);
+/* Friendly language names → localectl / setxkbmap codes */
+static const KeyboardLang keyboard_languages[] = {
+    { "English (US)", "us" },
+    { "English (UK)", "gb" },
+    { "German", "de" },
+    { "French", "fr" },
+    { "Spanish", "es" },
+    { "Italian", "it" },
+    { "Portuguese", "pt" },
+    { "Portuguese (Brazil)", "br" },
+    { "Dutch", "nl" },
+    { "Danish", "dk" },
+    { "Norwegian", "no" },
+    { "Swedish", "se" },
+    { "Finnish", "fi" },
+    { "Polish", "pl" },
+    { "Czech", "cz" },
+    { "Hungarian", "hu" },
+    { "Russian", "ru" },
+    { "Ukrainian", "ua" },
+    { "Turkish", "tr" },
+    { "Greek", "gr" },
+    { "Hebrew", "il" },
+    { "Arabic", "ara" },
+    { "Japanese", "jp" },
+    { "Korean", "kr" },
+    { "Chinese", "cn" },
+    { NULL, NULL }
+};
+
+static int keyboard_lang_count(void) {
+    int n = 0;
+    while (keyboard_languages[n].language)
+        n++;
+    return n;
+}
+
+static void load_keyboard_languages(StrList *sl) {
+    for (int i = 0; keyboard_languages[i].language; i++)
+        strlist_add(sl, keyboard_languages[i].language);
+}
+
+static const char *keyboard_keymap_for_index(int idx) {
+    if (idx < 0 || idx >= keyboard_lang_count())
+        return "us";
+    return keyboard_languages[idx].keymap;
+}
+
+static int keyboard_index_for_keymap(const char *code) {
+    if (!code || !code[0])
+        return 0;
+    for (int i = 0; keyboard_languages[i].language; i++) {
+        if (strcmp(keyboard_languages[i].keymap, code) == 0)
+            return i;
     }
-    if (sl->n == 0) {
-        for (int i = 0; fallback[i]; i++)
-            strlist_add(sl, fallback[i]);
+    /* Prefix match for variants like us-acentos → English (US) */
+    for (int i = 0; keyboard_languages[i].language; i++) {
+        size_t len = strlen(keyboard_languages[i].keymap);
+        if (strncmp(keyboard_languages[i].keymap, code, len) == 0 &&
+            (code[len] == '\0' || code[len] == '-'))
+            return i;
     }
+    return 0;
 }
 
 static void load_timezones(StrList *sl) {
@@ -289,7 +336,7 @@ static void refresh_desktop(void) {
 }
 
 static void apply_settings(void) {
-    const char *kb = app.kb.items[app.kb_sel];
+    const char *kb = keyboard_keymap_for_index(app.kb_sel);
     const char *tz = app.tz.items[app.tz_sel];
 
     apply_keymap(kb);
@@ -620,11 +667,11 @@ int main(void) {
     open_fonts();
     compute_layout();
 
-    load_keymaps(&app.kb);
+    load_keyboard_languages(&app.kb);
     load_timezones(&app.tz);
     cur_kb = current_keymap();
     cur_tz = current_timezone();
-    app.kb_sel = strlist_index(&app.kb, cur_kb);
+    app.kb_sel = keyboard_index_for_keymap(cur_kb);
     app.tz_sel = strlist_index(&app.tz, cur_tz);
     free(cur_kb);
     free(cur_tz);
