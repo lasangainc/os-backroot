@@ -10,6 +10,7 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+#include <fcntl.h>
 #include <sys/select.h>
 
 #include "emblem.h"
@@ -424,9 +425,18 @@ int main(void) {
                 XMoveResizeWindow(dpy, panel, 0, ra.height - PANEL_H, ra.width, PANEL_H);
                 draw_panel();
             } else if (ev.type == ButtonPress && ev.xbutton.window == panel) {
-                TaskBtn *t = task_at(ev.xbutton.x);
-                if (t)
-                    activate_task(t);
+                if (ev.xbutton.x < BRAND_W) {
+                    int fd = open("/tmp/br8-start-menu.ctl", O_WRONLY | O_NONBLOCK);
+                    if (fd >= 0) {
+                        char c = 't';
+                        (void)write(fd, &c, 1);
+                        close(fd);
+                    }
+                } else {
+                    TaskBtn *t = task_at(ev.xbutton.x);
+                    if (t)
+                        activate_task(t);
+                }
             } else if (ev.type == PropertyNotify &&
                        (ev.xproperty.window == root && ev.xproperty.atom == br8_panel_rev)) {
                 last_rev = read_panel_rev();
