@@ -143,6 +143,7 @@ Check zombies: `ps` STAT `Z` on qemu PID — remove stale `qemu.pid` before rest
 - **Scope:** Smallest correct diff; match existing style in `br8-wm.c` / `br8-panel.c`.
 - **Comments:** Only for non-obvious protocol or X11 quirks.
 - **Do not commit:** `vm/*.img`, bootstrap tarball, `qemu.pid`, `websockify.log`, compiled binaries.
+- **Windows 8 styling:** Do not apply Windows 8 visual styling (tiles, metro UI, colors, etc.) unless the developer explicitly requests it in that task.
 
 ## systemd session
 
