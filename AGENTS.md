@@ -6,7 +6,7 @@ Guide for AI agents working on **os-backroot** / **Backroot 8**: a minimal X11 d
 
 | Item | Detail |
 |------|--------|
-| **Goal** | Linux distro styled to look like Windows 8, built on Arch with precompiled `linux` kernel |
+| **Goal** | Linux distro with custom DE styled to look like Windows 8, built on Arch with precompiled `linux` kernel |
 | **WM** | `br8-wm` — C, Xlib only |
 | **Panel** | `br8-panel` — C, Xlib only |
 | **Session** | `startx` → `xinitrc` → panel + xterm + `exec br8-wm` |
