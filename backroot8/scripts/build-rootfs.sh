@@ -93,7 +93,7 @@ pacman -S --noconfirm --needed \
     linux linux-firmware \
     base base-devel \
     xorg-server xorg-xinit xorg-xrandr xf86-video-vesa \
-    xterm dolphin feh fbida nettle xorg-fonts-misc libxft ttf-dejavu gtk4 x11vnc unzip neofetch \
+    xterm dolphin feh fbida nettle xorg-fonts-misc libxft ttf-dejavu gtk4 x11vnc unzip \
     systemd-sysvcompat \
     sudo networkmanager \
     mkinitcpio grub efibootmgr \
@@ -178,6 +178,7 @@ sudo install -Dm644 "$ROOT/assets/neoemblem.txt" "$MNT/usr/share/backroot8/neoem
 sudo install -Dm644 "$ROOT/rootfs-overlay/etc/neofetch/config.conf" "$MNT/etc/neofetch/config.conf"
 sudo mkdir -p "$MNT/root/.config/neofetch"
 sudo install -Dm644 "$ROOT/rootfs-overlay/etc/neofetch/config.conf" "$MNT/root/.config/neofetch/config.conf"
+sudo install -Dm755 "$ROOT/rootfs-overlay/usr/local/bin/neofetch" "$MNT/usr/local/bin/neofetch"
 sudo install -Dm644 "$ROOT/rootfs-overlay/etc/motd" "$MNT/etc/motd"
 sudo install -Dm644 "$ROOT/rootfs-overlay/etc/systemd/system/backroot8-desktop.service" \
     "$MNT/etc/systemd/system/backroot8-desktop.service"
