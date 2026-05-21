@@ -46,6 +46,7 @@ static Atom net_wm_icon, net_wm_name, utf8_string;
 static TaskBtn tasks[MAX_TASKS];
 static int ntasks;
 static unsigned long last_rev;
+static int start_menu_open;
 static Pixmap emblem_pm;
 static int emblem_ready;
 
@@ -365,6 +366,32 @@ static unsigned long read_panel_rev(void) {
     return rev;
 }
 
+static int read_start_open(void) {
+    Atom actual;
+    int fmt;
+    unsigned long n, bytes;
+    unsigned long *data = NULL;
+    int open = 0;
+    if (XGetWindowProperty(dpy, root, br8_start_open, 0, 8, False, XA_CARDINAL,
+            &actual, &fmt, &n, &bytes, (unsigned char **)&data) == Success && data && n > 0)
+        open = data[0] ? 1 : 0;
+    if (data)
+        XFree(data);
+    return open;
+}
+
+static void sync_panel_visibility(void) {
+    int open = read_start_open();
+    if (open && !start_menu_open) {
+        XUnmapWindow(dpy, panel);
+        start_menu_open = 1;
+    } else if (!open && start_menu_open) {
+        start_menu_open = 0;
+        XMapRaised(dpy, panel);
+        draw_panel();
+    }
+}
+
 int main(void) {
     dpy = XOpenDisplay(NULL);
     if (!dpy) {
@@ -432,13 +459,15 @@ int main(void) {
         unsigned long rev = read_panel_rev();
         if (rev != last_rev) {
             last_rev = rev;
-            draw_panel();
+            if (!start_menu_open)
+                draw_panel();
         }
+        sync_panel_visibility();
 
         while (XPending(dpy)) {
             XEvent ev;
             XNextEvent(dpy, &ev);
-            if (ev.type == Expose && ev.xexpose.count == 0)
+            if (ev.type == Expose && ev.xexpose.count == 0 && !start_menu_open)
                 draw_panel();
             else if (ev.type == ConfigureNotify) {
                 XGetWindowAttributes(dpy, root, &ra);
@@ -452,10 +481,14 @@ int main(void) {
                     if (t)
                         activate_task(t);
                 }
-            } else if (ev.type == PropertyNotify &&
-                       (ev.xproperty.window == root && ev.xproperty.atom == br8_panel_rev)) {
-                last_rev = read_panel_rev();
-                draw_panel();
+            } else if (ev.type == PropertyNotify && ev.xproperty.window == root) {
+                if (ev.xproperty.atom == br8_panel_rev) {
+                    last_rev = read_panel_rev();
+                    if (!start_menu_open)
+                        draw_panel();
+                } else if (ev.xproperty.atom == br8_start_open) {
+                    sync_panel_visibility();
+                }
             }
         }
     }

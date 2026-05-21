@@ -356,11 +356,17 @@ static void add_tile(int x, int y, int w, int h, const char *label,
         t->exec_cmd[0] = '\0';
 }
 
+static int home_tile_top(void) {
+    if (header_font)
+        return MARGIN + header_font->ascent + header_font->descent + 24;
+    return HEADER_H;
+}
+
 static void layout_home(void) {
     n_home_tiles = 0;
     int col1 = MARGIN;
     int col2 = MARGIN + TILE + TILE_GAP;
-    int y0 = HEADER_H;
+    int y0 = home_tile_top();
 
     add_tile(col1, y0, TILE, TILE, "Dolphin", 0, 120, 215, 'D', ACT_DOLPHIN, NULL);
     add_tile(col2, y0, TILE, TILE, "Terminal", 16, 124, 16, 'T', ACT_TERMINAL, NULL);
@@ -444,16 +450,6 @@ static void load_wallpaper(void) {
 static void draw_bg(void) {
     XSetForeground(dpy, gc, rgb(30, 46, 76));
     XFillRectangle(dpy, start_win, gc, 0, 0, win_w, win_h);
-
-    XSetForeground(dpy, gc, rgb(40, 58, 90));
-    for (int i = 0; i < 12; i++) {
-        int cx = (i * 173 + 60) % (win_w + 200) - 100;
-        int cy = (i * 131 + 40) % (content_h + 200) - scroll_y - 100;
-        int r = 40 + (i * 37) % 80;
-        if (cy + r < 0 || cy - r > win_h)
-            continue;
-        XFillArc(dpy, start_win, gc, cx - r, cy - r, r * 2, r * 2, 0, 360 * 64);
-    }
 }
 
 static void draw_tile_glyph(const Tile *t, int sx, int sy) {
@@ -549,7 +545,7 @@ static void draw_all(void) {
     XGetWindowAttributes(dpy, root, &ra);
     root_h = ra.height;
     win_w = ra.width;
-    win_h = root_h - PANEL_H;
+    win_h = root_h;
     XMoveResizeWindow(dpy, start_win, 0, 0, win_w, win_h);
     layout_content();
     draw_bg();
@@ -592,7 +588,15 @@ static AppEntry *app_at_content(int cx, int cy) {
     return &apps[idx];
 }
 
+static int emblem_zone_click(int x, int y) {
+    return x >= 0 && x < 48 && y >= win_h - PANEL_H;
+}
+
 static void handle_click(int x, int y) {
+    if (emblem_zone_click(x, y)) {
+        hide_menu();
+        return;
+    }
     int cy = y + scroll_y;
     Tile *t = tile_at_content(x, cy);
     if (t) {
@@ -617,7 +621,7 @@ static void resize_to_root(void) {
     XGetWindowAttributes(dpy, root, &ra);
     root_h = ra.height;
     win_w = ra.width;
-    win_h = root_h - PANEL_H;
+    win_h = root_h;
     XMoveResizeWindow(dpy, start_win, 0, 0, win_w, win_h);
     if (visible)
         draw_all();
