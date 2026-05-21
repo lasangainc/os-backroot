@@ -1,6 +1,6 @@
 CC = gcc
-CFLAGS = -Wall -Wextra -O2
-LDFLAGS = -lX11
+CFLAGS = -Wall -Wextra -O2 $(shell pkg-config --cflags xft 2>/dev/null)
+LDFLAGS = -lX11 $(shell pkg-config --libs xft 2>/dev/null)
 
 br8-panel: br8-panel.c
 	$(CC) $(CFLAGS) -o $@ $< $(LDFLAGS)

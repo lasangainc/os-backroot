@@ -4,6 +4,7 @@
 #include <X11/Xlib.h>
 #include <X11/Xatom.h>
 #include <X11/Xutil.h>
+#include <X11/Xft/Xft.h>
 #include <X11/cursorfont.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -11,15 +12,14 @@
 #include <unistd.h>
 #include <signal.h>
 
-#define TITLE_H 28
+#define TITLE_H 30
 #define MENU_W 240
 #define MENU_ITEM_H 32
 #define MENU_ITEMS 2
 #define MENU_H (MENU_ITEMS * MENU_ITEM_H)
-#define BTN_W 22
-#define BTN_H 18
-#define BTN_PAD 4
-#define CLOSE_EXTRA_W 6
+#define BTN_W 30
+#define CLOSE_W 34
+#define TITLE_PAD_L 12
 #define MAX_TITLE 256
 
 typedef struct {
@@ -40,8 +40,10 @@ static Display *dpy;
 static int screen;
 static Window root;
 static Colormap cmap;
-static XFontStruct *title_font;
-static GC gc_title, gc_btn, gc_close_border, gc_close_x;
+static XftFont *ui_font;
+static Visual *visual;
+static Colormap xft_cmap;
+static GC gc_title, gc_btn, gc_close_fill, gc_close_x;
 static Atom wm_protocols, wm_delete;
 static Atom net_wm_name, net_client_list, utf8_string;
 static Atom br8_frame, br8_client, br8_panel_rev, br8_activate;
@@ -68,6 +70,40 @@ static unsigned long rgb(int r, int g, int b) {
     if (!XAllocColor(dpy, cmap, &c))
         return BlackPixel(dpy, screen);
     return c.pixel;
+}
+
+static XRenderColor render_rgb(int r, int g, int b) {
+    XRenderColor c;
+    c.red = (unsigned short)(r * 257);
+    c.green = (unsigned short)(g * 257);
+    c.blue = (unsigned short)(b * 257);
+    c.alpha = 0xffff;
+    return c;
+}
+
+static int text_baseline(int height) {
+    if (!ui_font)
+        return height - 8;
+    return (height + ui_font->ascent - ui_font->descent) / 2;
+}
+
+static void xft_draw(Window win, int x, int y, const char *text, int r, int g, int b) {
+    if (!ui_font || !text || !text[0])
+        return;
+    XftDraw *xd = XftDrawCreate(dpy, win, visual, xft_cmap);
+    if (!xd)
+        return;
+    XftColor col;
+    XRenderColor rc = render_rgb(r, g, b);
+    if (XftColorAllocValue(dpy, visual, xft_cmap, &rc, &col)) {
+        XftDrawStringUtf8(xd, &col, ui_font, x, y, (FcChar8 *)text, (int)strlen(text));
+        XftColorFree(dpy, visual, xft_cmap, &col);
+    }
+    XftDrawDestroy(xd);
+}
+
+static int btn_total_width(void) {
+    return BTN_W + BTN_W + CLOSE_W;
 }
 
 static Client *find_client(Window w) {
@@ -169,43 +205,67 @@ static void fetch_client_title(Client *c) {
     strncpy(c->name, "Window", MAX_TITLE);
 }
 
+static void draw_chrome_btn_bg(Window w) {
+    XSetForeground(dpy, gc_title, rgb(43, 43, 43));
+    XFillRectangle(dpy, w, gc_title, 0, 0, BTN_W, TITLE_H);
+}
+
+static void draw_min_button(Client *c) {
+    draw_chrome_btn_bg(c->btn_min);
+    XSetForeground(dpy, gc_btn, rgb(255, 255, 255));
+    int cx = BTN_W / 2;
+    int cy = TITLE_H / 2;
+    XDrawLine(dpy, c->btn_min, gc_btn, cx - 5, cy, cx + 5, cy);
+    XDrawLine(dpy, c->btn_min, gc_btn, cx - 5, cy + 1, cx + 5, cy + 1);
+}
+
+static void draw_max_button(Client *c) {
+    draw_chrome_btn_bg(c->btn_max);
+    XSetForeground(dpy, gc_btn, rgb(255, 255, 255));
+    int cx = BTN_W / 2;
+    int cy = TITLE_H / 2;
+    if (c->maximized) {
+        int s = 4;
+        XDrawRectangle(dpy, c->btn_max, gc_btn, cx - s, cy - s + 2, s, s);
+        XDrawRectangle(dpy, c->btn_max, gc_btn, cx - s + 3, cy - s - 1, s, s);
+    } else {
+        int s = 5;
+        XDrawRectangle(dpy, c->btn_max, gc_btn, cx - s, cy - s, s * 2, s * 2);
+    }
+}
+
 static void draw_close_button(Client *c) {
-    XClearWindow(dpy, c->btn_close);
-    int w = BTN_W + CLOSE_EXTRA_W;
-    int h = BTN_H;
-    int pad = 2;
-    XSetForeground(dpy, gc_close_border, rgb(200, 40, 40));
-    XDrawRectangle(dpy, c->btn_close, gc_close_border, pad, pad, w - 2 * pad - 1, h - 2 * pad - 1);
-    XSetForeground(dpy, gc_close_x, rgb(220, 220, 220));
-    int cx = w / 2, cy = h / 2, dx = 5, dy = 2;
+    XSetForeground(dpy, gc_close_fill, rgb(196, 43, 28));
+    XFillRectangle(dpy, c->btn_close, gc_close_fill, 0, 0, CLOSE_W, TITLE_H);
+    XSetForeground(dpy, gc_close_x, rgb(255, 255, 255));
+    int cx = CLOSE_W / 2;
+    int cy = TITLE_H / 2;
+    int dx = 5;
+    int dy = 5;
     XDrawLine(dpy, c->btn_close, gc_close_x, cx - dx, cy - dy, cx + dx, cy + dy);
     XDrawLine(dpy, c->btn_close, gc_close_x, cx - dx, cy + dy, cx + dx, cy - dy);
-    XDrawLine(dpy, c->btn_close, gc_close_x, cx - dx + 1, cy - dy, cx + dx + 1, cy + dy);
-    XDrawLine(dpy, c->btn_close, gc_close_x, cx - dx + 1, cy + dy, cx + dx + 1, cy - dy);
 }
 
 static void draw_title(Client *c) {
-    int btn_total = 3 * BTN_W + CLOSE_EXTRA_W + 4 * BTN_PAD;
-    int title_w = c->w - btn_total;
+    int title_w = c->w - btn_total_width();
 
-    XSetForeground(dpy, gc_title, rgb(45, 48, 58));
+    XSetForeground(dpy, gc_title, rgb(43, 43, 43));
     XFillRectangle(dpy, c->title, gc_title, 0, 0, c->w, TITLE_H);
 
     if (!c->name[0])
         return;
 
-    int len = (int)strlen(c->name);
-    int tw = XTextWidth(title_font, c->name, len);
-    int x = (title_w - tw) / 2;
-    if (x < 6)
-        x = 6;
-    if (x + tw > title_w - 4)
-        x = title_w - tw - 4;
-    if (x < 6)
-        x = 6;
+    int x = TITLE_PAD_L;
+    if (x + 200 > title_w - 4)
+        x = TITLE_PAD_L;
+    xft_draw(c->title, x, text_baseline(TITLE_H), c->name, 255, 255, 255);
+}
 
-    XSetForeground(dpy, gc_btn, rgb(230, 230, 235));
-    XDrawString(dpy, c->title, gc_btn, x, 18, c->name, len);
+static void draw_chrome(Client *c) {
+    draw_title(c);
+    draw_min_button(c);
+    draw_max_button(c);
+    draw_close_button(c);
 }
 
 static void spawn_terminal_root(void) {
@@ -273,18 +333,17 @@ static void show_menu(int x, int y) {
 }
 
 static void draw_menu(void) {
-    XSetForeground(dpy, gc_title, rgb(35, 38, 48));
+    XSetForeground(dpy, gc_title, rgb(43, 43, 43));
     XFillRectangle(dpy, menu_win, gc_title, 0, 0, MENU_W, MENU_H);
 
     for (int i = 0; i < MENU_ITEMS; i++) {
         int y0 = i * MENU_ITEM_H;
         if (i == menu_hover) {
-            XSetForeground(dpy, gc_title, rgb(48, 82, 138));
-            XFillRectangle(dpy, menu_win, gc_title, 1, y0 + 1, MENU_W - 2, MENU_ITEM_H - 2);
+            XSetForeground(dpy, gc_title, rgb(0, 120, 215));
+            XFillRectangle(dpy, menu_win, gc_title, 0, y0, MENU_W, MENU_ITEM_H);
         }
-        XSetForeground(dpy, gc_btn, rgb(230, 230, 235));
-        XDrawString(dpy, menu_win, gc_btn, 12, y0 + 22,
-            menu_labels[i], (int)strlen(menu_labels[i]));
+        xft_draw(menu_win, 12, y0 + text_baseline(MENU_ITEM_H),
+            menu_labels[i], 255, 255, 255);
     }
 }
 
@@ -300,7 +359,7 @@ static void menu_set_hover(int item) {
 
 static void create_menu(void) {
     menu_win = XCreateSimpleWindow(dpy, root, 0, 0, MENU_W, MENU_H, 1,
-        rgb(80, 80, 90), rgb(35, 38, 48));
+        rgb(60, 60, 60), rgb(43, 43, 43));
     XSelectInput(dpy, menu_win,
         ExposureMask | ButtonPressMask | PointerMotionMask | LeaveWindowMask);
     XUnmapWindow(dpy, menu_win);
@@ -309,17 +368,15 @@ static void create_menu(void) {
 }
 
 static void layout_client(Client *c) {
-    int btn_total = 3 * BTN_W + CLOSE_EXTRA_W + 4 * BTN_PAD;
-    int tx = c->w - btn_total;
+    int tx = c->w - btn_total_width();
     XMoveResizeWindow(dpy, c->title, 0, 0, c->w, TITLE_H);
     XMoveResizeWindow(dpy, c->client, 0, TITLE_H, c->w, c->h - TITLE_H);
-    XMoveResizeWindow(dpy, c->btn_min, tx, (TITLE_H - BTN_H) / 2, BTN_W, BTN_H);
-    tx += BTN_W + BTN_PAD;
-    XMoveResizeWindow(dpy, c->btn_max, tx, (TITLE_H - BTN_H) / 2, BTN_W, BTN_H);
-    tx += BTN_W + BTN_PAD;
-    XMoveResizeWindow(dpy, c->btn_close, tx, (TITLE_H - BTN_H) / 2, BTN_W + CLOSE_EXTRA_W, BTN_H);
-    draw_title(c);
-    draw_close_button(c);
+    XMoveResizeWindow(dpy, c->btn_min, tx, 0, BTN_W, TITLE_H);
+    tx += BTN_W;
+    XMoveResizeWindow(dpy, c->btn_max, tx, 0, BTN_W, TITLE_H);
+    tx += BTN_W;
+    XMoveResizeWindow(dpy, c->btn_close, tx, 0, CLOSE_W, TITLE_H);
+    draw_chrome(c);
 }
 
 static void map_client(Client *c) {
@@ -420,11 +477,9 @@ static void add_client(Window w) {
     c->frame = XCreateSimpleWindow(dpy, root, c->x, c->y, c->w, c->h, 2,
         rgb(70, 75, 90), rgb(28, 30, 38));
     c->title = XCreateSimpleWindow(dpy, c->frame, 0, 0, c->w, TITLE_H, 0, 0, 0);
-    c->btn_min = XCreateSimpleWindow(dpy, c->frame, 0, 0, BTN_W, BTN_H, 1,
-        rgb(100, 105, 120), rgb(55, 58, 70));
-    c->btn_max = XCreateSimpleWindow(dpy, c->frame, 0, 0, BTN_W, BTN_H, 1,
-        rgb(100, 105, 120), rgb(55, 58, 70));
-    c->btn_close = XCreateSimpleWindow(dpy, c->frame, 0, 0, BTN_W + CLOSE_EXTRA_W, BTN_H, 0, 0, 0);
+    c->btn_min = XCreateSimpleWindow(dpy, c->frame, 0, 0, BTN_W, TITLE_H, 0, 0, 0);
+    c->btn_max = XCreateSimpleWindow(dpy, c->frame, 0, 0, BTN_W, TITLE_H, 0, 0, 0);
+    c->btn_close = XCreateSimpleWindow(dpy, c->frame, 0, 0, CLOSE_W, TITLE_H, 0, 0, 0);
 
     XSelectInput(dpy, c->frame, SubstructureRedirectMask | SubstructureNotifyMask);
     XSelectInput(dpy, c->title, ButtonPressMask | ButtonReleaseMask | PointerMotionMask | ExposureMask);
@@ -544,15 +599,31 @@ int main(void) {
     screen = DefaultScreen(dpy);
     root = RootWindow(dpy, screen);
     cmap = DefaultColormap(dpy, screen);
-    title_font = XLoadQueryFont(dpy, "fixed");
-    if (!title_font)
-        title_font = XLoadQueryFont(dpy, "6x13");
+    visual = DefaultVisual(dpy, screen);
+    xft_cmap = DefaultColormap(dpy, screen);
+    static const char *const font_names[] = {
+        "sans-serif-10:antialias=true:hinting=true",
+        "DejaVu Sans-10:antialias=true",
+        "Liberation Sans-10:antialias=true",
+        "FreeSans-10",
+        NULL
+    };
+    for (int i = 0; font_names[i]; i++) {
+        ui_font = XftFontOpenName(dpy, screen, font_names[i]);
+        if (ui_font && ui_font->ascent > 0)
+            break;
+        if (ui_font) {
+            XftFontClose(dpy, ui_font);
+            ui_font = NULL;
+        }
+    }
 
     gc_title = XCreateGC(dpy, root, 0, NULL);
     gc_btn = XCreateGC(dpy, root, 0, NULL);
-    gc_close_border = XCreateGC(dpy, root, 0, NULL);
+    gc_close_fill = XCreateGC(dpy, root, 0, NULL);
     gc_close_x = XCreateGC(dpy, root, 0, NULL);
-    XSetFont(dpy, gc_btn, title_font->fid);
+    XSetLineAttributes(dpy, gc_btn, 1, LineSolid, CapRound, JoinRound);
+    XSetLineAttributes(dpy, gc_close_x, 2, LineSolid, CapRound, JoinRound);
 
     wm_protocols = XInternAtom(dpy, "WM_PROTOCOLS", False);
     wm_delete = XInternAtom(dpy, "WM_DELETE_WINDOW", False);
@@ -651,6 +722,10 @@ int main(void) {
                 if (c) {
                     if (ev.xexpose.window == c->title)
                         draw_title(c);
+                    else if (ev.xexpose.window == c->btn_min)
+                        draw_min_button(c);
+                    else if (ev.xexpose.window == c->btn_max)
+                        draw_max_button(c);
                     else if (ev.xexpose.window == c->btn_close)
                         draw_close_button(c);
                 }

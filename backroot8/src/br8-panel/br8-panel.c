@@ -4,6 +4,7 @@
 #include <X11/Xlib.h>
 #include <X11/Xatom.h>
 #include <X11/Xutil.h>
+#include <X11/Xft/Xft.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -33,13 +34,45 @@ static Display *dpy;
 static int screen;
 static Window panel, root;
 static GC gc;
-static XFontStruct *panel_font;
+static XftFont *ui_font;
+static Visual *visual;
+static Colormap xft_cmap;
 static int panel_w;
 static Atom br8_frame, br8_client, br8_panel_rev, br8_activate;
 static Atom net_wm_icon, net_wm_name, utf8_string;
 static TaskBtn tasks[MAX_TASKS];
 static int ntasks;
 static unsigned long last_rev;
+
+static XRenderColor render_rgb(int r, int g, int b) {
+    XRenderColor c;
+    c.red = (unsigned short)(r * 257);
+    c.green = (unsigned short)(g * 257);
+    c.blue = (unsigned short)(b * 257);
+    c.alpha = 0xffff;
+    return c;
+}
+
+static int text_baseline(int height) {
+    if (!ui_font)
+        return height - 8;
+    return (height + ui_font->ascent - ui_font->descent) / 2;
+}
+
+static void xft_draw(Drawable draw, int x, int y, const char *text, int r, int g, int b) {
+    if (!ui_font || !text || !text[0])
+        return;
+    XftDraw *xd = XftDrawCreate(dpy, draw, visual, xft_cmap);
+    if (!xd)
+        return;
+    XftColor col;
+    XRenderColor rc = render_rgb(r, g, b);
+    if (XftColorAllocValue(dpy, visual, xft_cmap, &rc, &col)) {
+        XftDrawStringUtf8(xd, &col, ui_font, x, y, (FcChar8 *)text, (int)strlen(text));
+        XftColorFree(dpy, visual, xft_cmap, &col);
+    }
+    XftDrawDestroy(xd);
+}
 
 static unsigned long rgba(int r, int g, int b, double a) {
     int R = (int)(r * a + 20 * (1 - a));
@@ -98,11 +131,13 @@ static Pixmap icon_fallback(Window client) {
     GC igc = XCreateGC(dpy, pm, 0, NULL);
     XSetForeground(dpy, igc, class_color(label));
     XFillRectangle(dpy, pm, igc, 0, 0, ICON_SZ, ICON_SZ);
-    XSetForeground(dpy, igc, rgba(240, 240, 245, 1.0));
-    char s[2] = { letter, 0 };
-    int tw = panel_font ? XTextWidth(panel_font, s, 1) : 6;
-    XDrawString(dpy, pm, igc, (ICON_SZ - tw) / 2, 16, s, 1);
     XFreeGC(dpy, igc);
+    char s[2] = { letter, 0 };
+    if (ui_font) {
+        XGlyphInfo ext;
+        XftTextExtentsUtf8(dpy, ui_font, (FcChar8 *)s, 1, &ext);
+        xft_draw(pm, (ICON_SZ - ext.xOff) / 2, text_baseline(ICON_SZ), s, 255, 255, 255);
+    }
     return pm;
 }
 
@@ -199,8 +234,7 @@ static void draw_panel(void) {
     XSetForeground(dpy, gc, bg);
     XFillRectangle(dpy, panel, gc, 0, 0, panel_w, PANEL_H);
 
-    XSetForeground(dpy, gc, rgba(120, 180, 255, 1.0));
-    XDrawString(dpy, panel, gc, 12, 21, "Backroot 8", 10);
+    xft_draw(panel, 12, text_baseline(PANEL_H), "Backroot 8", 120, 180, 255);
 
     collect_tasks();
 
@@ -217,9 +251,11 @@ static void draw_panel(void) {
     struct tm *tm = localtime(&t);
     char buf[64];
     strftime(buf, sizeof(buf), "%H:%M", tm);
-    int tw = panel_font ? XTextWidth(panel_font, buf, (int)strlen(buf)) : 40;
-    XSetForeground(dpy, gc, rgba(200, 200, 210, 1.0));
-    XDrawString(dpy, panel, gc, panel_w - tw - 16, 21, buf, (int)strlen(buf));
+    if (ui_font) {
+        XGlyphInfo ext;
+        XftTextExtentsUtf8(dpy, ui_font, (FcChar8 *)buf, (int)strlen(buf), &ext);
+        xft_draw(panel, panel_w - ext.xOff - 16, text_baseline(PANEL_H), buf, 200, 200, 210);
+    }
 
     XRaiseWindow(dpy, panel);
 }
@@ -263,9 +299,24 @@ int main(void) {
     }
     screen = DefaultScreen(dpy);
     root = RootWindow(dpy, screen);
-    panel_font = XLoadQueryFont(dpy, "fixed");
-    if (!panel_font)
-        panel_font = XLoadQueryFont(dpy, "6x13");
+    visual = DefaultVisual(dpy, screen);
+    xft_cmap = DefaultColormap(dpy, screen);
+    static const char *const font_names[] = {
+        "sans-serif-10:antialias=true:hinting=true",
+        "DejaVu Sans-10:antialias=true",
+        "Liberation Sans-10:antialias=true",
+        "FreeSans-10",
+        NULL
+    };
+    for (int i = 0; font_names[i]; i++) {
+        ui_font = XftFontOpenName(dpy, screen, font_names[i]);
+        if (ui_font && ui_font->ascent > 0)
+            break;
+        if (ui_font) {
+            XftFontClose(dpy, ui_font);
+            ui_font = NULL;
+        }
+    }
 
     XSetErrorHandler(NULL);
 
@@ -290,8 +341,6 @@ int main(void) {
     XSelectInput(dpy, root, PropertyChangeMask);
 
     gc = XCreateGC(dpy, panel, 0, NULL);
-    if (panel_font)
-        XSetFont(dpy, gc, panel_font->fid);
     XMapRaised(dpy, panel);
     draw_panel();
     last_rev = read_panel_rev();
