@@ -35,8 +35,11 @@
 #define WALLPAPER "/usr/share/backgrounds/backroot8.jpg"
 #define CONFIG_DIR "/root/.config/backroot8"
 #define CONFIG_PATH CONFIG_DIR "/start_layout"
-#define ANIM_MS_OPEN 240.0
-#define OPEN_FLYIN 64
+#define OPEN_SLIDE_X 100
+#define OPEN_TILE_DUR_MS 170.0
+#define OPEN_TILE_STAGGER_MS 48.0
+#define HOME_HEADER_DELAY_MS 110.0
+#define HOME_HEADER_SLIDE_MS 220.0
 #define SMOOTH_TAU_MS 40.0
 #define DRAG_THRESHOLD 6
 #define DRAG_SCALE 0.88
@@ -100,7 +103,9 @@ static int n_apps;
 
 static double open_anim;
 static struct timespec open_anim_start;
-static int open_start_y[MAX_HOME_TILES];
+static int open_start_x[MAX_HOME_TILES];
+static int open_stagger_rank[MAX_HOME_TILES];
+static int home_header_x;
 static int layout_animating;
 static struct timespec last_tick;
 
@@ -246,6 +251,35 @@ static double ease_out_cubic(double t) {
     return 1.0 - u * u * u;
 }
 
+static double open_timeline_ms(void) {
+    int n = n_tile_order > 0 ? n_tile_order : 1;
+    double tiles = (n - 1) * OPEN_TILE_STAGGER_MS + OPEN_TILE_DUR_MS;
+    return tiles + HOME_HEADER_DELAY_MS + HOME_HEADER_SLIDE_MS;
+}
+
+static void build_open_stagger(void) {
+    int order[MAX_HOME_TILES];
+    for (int s = 0; s < n_tile_order; s++)
+        order[s] = tile_order[s];
+    for (int i = 0; i < n_tile_order - 1; i++) {
+        for (int j = i + 1; j < n_tile_order; j++) {
+            Tile *a = &home_tiles[order[i]];
+            Tile *b = &home_tiles[order[j]];
+            int ra = a->layout_x + a->layout_w;
+            int rb = b->layout_x + b->layout_w;
+            if (rb > ra || (rb == ra && b->layout_y < a->layout_y)) {
+                int tmp = order[i];
+                order[i] = order[j];
+                order[j] = tmp;
+            }
+        }
+    }
+    for (int i = 0; i < n_home_tiles; i++)
+        open_stagger_rank[i] = n_tile_order;
+    for (int rank = 0; rank < n_tile_order; rank++)
+        open_stagger_rank[order[rank]] = rank;
+}
+
 static int lerp_i(int a, int b, double t) {
     return (int)(a + (b - a) * t + 0.5);
 }
@@ -338,14 +372,16 @@ static void hide_menu(void) {
 
 static void begin_open_animation(void) {
     open_anim = 0.0;
+    home_header_x = -OPEN_SLIDE_X;
     clock_gettime(CLOCK_MONOTONIC, &open_anim_start);
     clock_gettime(CLOCK_MONOTONIC, &last_tick);
     layout_home();
+    build_open_stagger();
     for (int i = 0; i < n_home_tiles; i++) {
         Tile *t = &home_tiles[i];
-        open_start_y[i] = t->layout_y + OPEN_FLYIN;
-        t->anim_x = t->layout_x;
-        t->anim_y = open_start_y[i];
+        open_start_x[i] = t->layout_x + OPEN_SLIDE_X;
+        t->anim_x = open_start_x[i];
+        t->anim_y = t->layout_y;
         t->anim_w = t->layout_w;
         t->anim_h = t->layout_h;
     }
@@ -817,16 +853,37 @@ static void tick_animations(void) {
     if (open_anim < 1.0) {
         double elapsed = now_ms() - (open_anim_start.tv_sec * 1000.0 +
             open_anim_start.tv_nsec / 1000000.0);
-        open_anim = elapsed / ANIM_MS_OPEN;
+        double total = open_timeline_ms();
+        open_anim = elapsed / total;
         if (open_anim > 1.0)
             open_anim = 1.0;
-        double e = ease_out_cubic(open_anim);
+
         for (int i = 0; i < n_home_tiles; i++) {
             Tile *t = &home_tiles[i];
-            t->anim_x = t->layout_x;
-            t->anim_y = lerp_i(open_start_y[i], t->layout_y, e);
-            t->anim_w = t->layout_w;
-            t->anim_h = t->layout_h;
+            int rank = open_stagger_rank[i];
+            if (rank >= n_tile_order)
+                rank = n_tile_order - 1;
+            double tile_el = elapsed - rank * OPEN_TILE_STAGGER_MS;
+            double te = tile_el / OPEN_TILE_DUR_MS;
+            if (te < 0.0)
+                te = 0.0;
+            if (te > 1.0)
+                te = 1.0;
+            double e = ease_out_cubic(te);
+            t->anim_x = lerp_i(open_start_x[i], t->layout_x, e);
+            t->anim_y = t->layout_y;
+            t->anim_w = lerp_i((int)(t->layout_w * 0.88), t->layout_w, e);
+            t->anim_h = lerp_i((int)(t->layout_h * 0.88), t->layout_h, e);
+        }
+
+        double header_el = elapsed - HOME_HEADER_DELAY_MS;
+        if (header_el < 0.0)
+            home_header_x = -OPEN_SLIDE_X - 40;
+        else {
+            double he = header_el / HOME_HEADER_SLIDE_MS;
+            if (he > 1.0)
+                he = 1.0;
+            home_header_x = lerp_i(-OPEN_SLIDE_X, MARGIN, ease_out_cubic(he));
         }
         mark_dirty();
     } else if (layout_animating) {
@@ -1121,8 +1178,8 @@ static void clear_home_region(Drawable dst, GC g) {
 }
 
 static void draw_home_section(Drawable dst, GC g) {
-    if (header_font)
-        xft_draw(dst, header_font, MARGIN, MARGIN + header_font->ascent,
+    if (header_font && home_header_x > -OPEN_SLIDE_X - 80)
+        xft_draw(dst, header_font, home_header_x, MARGIN + header_font->ascent,
             "Home", 255, 255, 255);
 
     for (int pass = 0; pass < 2; pass++) {
@@ -1265,6 +1322,7 @@ static void draw_all(void) {
         draw_home_section(buf_pm, buf_gc);
         draw_context_menu(buf_pm, buf_gc);
         if (!dragging && !layout_animating && open_anim >= 1.0) {
+            home_header_x = MARGIN;
             for (int i = 0; i < n_home_tiles; i++) {
                 Tile *t = &home_tiles[i];
                 t->anim_x = t->layout_x;
@@ -1371,9 +1429,9 @@ static void pin_app(int app_idx) {
         tile_order[n_tile_order++] = idx;
     Tile *t = &home_tiles[idx];
     layout_home();
-    open_start_y[idx] = t->layout_y + OPEN_FLYIN;
-    t->anim_x = t->layout_x;
-    t->anim_y = open_start_y[idx];
+    open_start_x[idx] = t->layout_x + OPEN_SLIDE_X;
+    t->anim_x = open_start_x[idx];
+    t->anim_y = t->layout_y;
     t->anim_w = t->layout_w;
     t->anim_h = t->layout_h;
     invalidate_static();
