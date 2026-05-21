@@ -1,149 +1,291 @@
 /*
- * Backroot Hello — lightweight system configurator (GTK4)
+ * Backroot Hello — keyboard layout and timezone configurator (X11 + Xft)
  */
-#include <gtk/gtk.h>
+#include <X11/Xlib.h>
+#include <X11/Xatom.h>
+#include <X11/Xutil.h>
+#include <X11/Xft/Xft.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <sys/select.h>
 
-#define APP_ID "io.backroot.hello"
-#define CSS_PATH "/usr/share/backroot/backroot-hello/backroot-hello.css"
+#define WIN_W 520
+#define WIN_H 500
+#define MARGIN 36
+#define COMBO_H 40
+#define TITLE_SUBTITLE_GAP 16
+#define SUBTITLE_SETTINGS_GAP 32
+#define SETTING_ROW_GAP 28
+#define LABEL_COMBO_GAP 8
+#define SETTINGS_APPLY_GAP 36
+#define POPUP_W 420
+#define POPUP_VISIBLE 10
+#define POPUP_ITEM_H 28
+#define POPUP_H (POPUP_VISIBLE * POPUP_ITEM_H)
+#define APPLY_H 40
+#define APPLY_W 120
+
+#define BG_R 81
+#define BG_G 49
+#define BG_B 169
+#define POPUP_BG_R 63
+#define POPUP_BG_G 39
+#define POPUP_BG_B 133
+
+#define WALLPAPER "/usr/share/backgrounds/backroot8.jpg"
 
 typedef struct {
-    GtkWidget *kb_dropdown;
-    GtkWidget *tz_dropdown;
-    GPtrArray *kb_codes;
-    GPtrArray *tz_names;
-    gboolean applying;
+    char **items;
+    int n;
+} StrList;
+
+typedef struct {
+    StrList kb;
+    StrList tz;
+    int kb_sel;
+    int tz_sel;
+    int active_combo; /* 0 none, 1 kb, 2 tz */
+    int popup_scroll;
+    Window popup;
+    int popup_visible;
+    int apply_hover;
 } AppState;
 
-static void load_css(void) {
-    GtkCssProvider *provider = gtk_css_provider_new();
-    const char *paths[] = {
-        CSS_PATH,
-        "backroot-hello.css",
-        "../rootfs-overlay/usr/share/backroot/backroot-hello/backroot-hello.css",
-        NULL,
-    };
+static Display *dpy;
+static int screen;
+static Window root, win;
+static GC gc;
+static Visual *visual;
+static Colormap cmap;
+static XftFont *title_font, *body_font, *label_font;
+static AppState app;
+static int win_x, win_y;
 
-    for (int i = 0; paths[i]; i++) {
-        if (g_file_test(paths[i], G_FILE_TEST_EXISTS)) {
-            gtk_css_provider_load_from_path(provider, paths[i]);
-            gtk_style_context_add_provider_for_display(
-                gdk_display_get_default(),
-                GTK_STYLE_PROVIDER(provider),
-                GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
-            g_object_unref(provider);
-            return;
-        }
+typedef struct {
+    int title_y;
+    int subtitle_y;
+    int kb_label_y;
+    int kb_combo_y;
+    int tz_label_y;
+    int tz_combo_y;
+    int apply_y;
+} Layout;
+
+static Layout layout;
+
+static void compute_layout(void);
+static void draw_all(void);
+
+static unsigned long rgb(int r, int g, int b) {
+    XColor c;
+    c.red = (unsigned short)(r << 8);
+    c.green = (unsigned short)(g << 8);
+    c.blue = (unsigned short)(b << 8);
+    c.flags = DoRed | DoGreen | DoBlue;
+    if (!XAllocColor(dpy, cmap, &c))
+        return BlackPixel(dpy, screen);
+    return c.pixel;
+}
+
+static XRenderColor render_rgb(int r, int g, int b) {
+    XRenderColor c;
+    c.red = (unsigned short)(r * 257);
+    c.green = (unsigned short)(g * 257);
+    c.blue = (unsigned short)(b * 257);
+    c.alpha = 0xffff;
+    return c;
+}
+
+static int text_baseline(int height, XftFont *font) {
+    if (!font)
+        return height - 10;
+    return (height + font->ascent - font->descent) / 2;
+}
+
+static void xft_draw(Drawable draw, int x, int y, const char *text, int r, int g, int b,
+        XftFont *font) {
+    if (!font || !text || !text[0])
+        return;
+    XftDraw *xd = XftDrawCreate(dpy, draw, visual, cmap);
+    if (!xd)
+        return;
+    XftColor col;
+    XRenderColor rc = render_rgb(r, g, b);
+    if (XftColorAllocValue(dpy, visual, cmap, &rc, &col)) {
+        XftDrawStringUtf8(xd, &col, font, x, y, (FcChar8 *)text, (int)strlen(text));
+        XftColorFree(dpy, visual, cmap, &col);
     }
+    XftDrawDestroy(xd);
+}
 
-    g_object_unref(provider);
+static void strlist_free(StrList *sl) {
+    if (!sl)
+        return;
+    for (int i = 0; i < sl->n; i++)
+        free(sl->items[i]);
+    free(sl->items);
+    sl->items = NULL;
+    sl->n = 0;
+}
+
+static void strlist_add(StrList *sl, const char *s) {
+    char **next = realloc(sl->items, (size_t)(sl->n + 1) * sizeof(char *));
+    if (!next)
+        return;
+    sl->items = next;
+    sl->items[sl->n++] = strdup(s);
 }
 
 static char *run_command(const char *cmd) {
     FILE *fp = popen(cmd, "r");
-    char *out;
+    char buf[512];
+    char *out = NULL;
+    size_t len = 0;
 
     if (!fp)
         return NULL;
-
-    out = g_strdup("");
-    for (;;) {
-        char buf[512];
-        if (!fgets(buf, sizeof buf, fp))
-            break;
-        {
-            char *tmp = g_strconcat(out, buf, NULL);
-            g_free(out);
-            out = tmp;
+    while (fgets(buf, sizeof buf, fp)) {
+        size_t bl = strlen(buf);
+        char *tmp = realloc(out, len + bl + 1);
+        if (!tmp) {
+            free(out);
+            pclose(fp);
+            return NULL;
         }
+        out = tmp;
+        memcpy(out + len, buf, bl);
+        len += bl;
+        out[len] = '\0';
     }
     pclose(fp);
-    g_strstrip(out);
+    if (out) {
+        while (len > 0 && (out[len - 1] == '\n' || out[len - 1] == '\r' || out[len - 1] == ' '))
+            out[--len] = '\0';
+    }
     return out;
 }
 
 static char *current_keymap(void) {
     char *out = run_command("localectl status 2>/dev/null | awk '/VC Keymap:/ {print $3}'");
-
     if (!out || !out[0]) {
-        g_free(out);
-        return g_strdup("us");
+        free(out);
+        return strdup("us");
     }
     return out;
 }
 
 static char *current_timezone(void) {
     char *out = run_command("timedatectl show --property=Timezone --value 2>/dev/null");
-
     if (!out || !out[0]) {
-        g_free(out);
-        return g_strdup("UTC");
+        free(out);
+        return strdup("UTC");
     }
     return out;
 }
 
-static GPtrArray *list_keymaps(void) {
-    GPtrArray *arr = g_ptr_array_new_with_free_func(g_free);
-    static const char *fallback[] = {
-        "us", "gb", "de", "fr", "es", "it", "pt", "ru", "jp", "pl", "se", "no", NULL,
-    };
-    FILE *fp = popen("localectl list-keymaps 2>/dev/null", "r");
-    char line[128];
+typedef struct {
+    const char *language;
+    const char *keymap;
+} KeyboardLang;
 
-    if (fp) {
-        while (fgets(line, sizeof line, fp)) {
-            g_strstrip(line);
-            if (line[0] && strchr(line, ' ') == NULL)
-                g_ptr_array_add(arr, g_strdup(line));
-        }
-        pclose(fp);
-    }
+/* Friendly language names → localectl / setxkbmap codes */
+static const KeyboardLang keyboard_languages[] = {
+    { "English (US)", "us" },
+    { "English (UK)", "gb" },
+    { "German", "de" },
+    { "French", "fr" },
+    { "Spanish", "es" },
+    { "Italian", "it" },
+    { "Portuguese", "pt" },
+    { "Portuguese (Brazil)", "br" },
+    { "Dutch", "nl" },
+    { "Danish", "dk" },
+    { "Norwegian", "no" },
+    { "Swedish", "se" },
+    { "Finnish", "fi" },
+    { "Polish", "pl" },
+    { "Czech", "cz" },
+    { "Hungarian", "hu" },
+    { "Russian", "ru" },
+    { "Ukrainian", "ua" },
+    { "Turkish", "tr" },
+    { "Greek", "gr" },
+    { "Hebrew", "il" },
+    { "Arabic", "ara" },
+    { "Japanese", "jp" },
+    { "Korean", "kr" },
+    { "Chinese", "cn" },
+    { NULL, NULL }
+};
 
-    if (arr->len == 0) {
-        for (int i = 0; fallback[i]; i++)
-            g_ptr_array_add(arr, g_strdup(fallback[i]));
-    }
-
-    return arr;
+static int keyboard_lang_count(void) {
+    int n = 0;
+    while (keyboard_languages[n].language)
+        n++;
+    return n;
 }
 
-static GPtrArray *list_timezones(void) {
-    GPtrArray *arr = g_ptr_array_new_with_free_func(g_free);
+static void load_keyboard_languages(StrList *sl) {
+    for (int i = 0; keyboard_languages[i].language; i++)
+        strlist_add(sl, keyboard_languages[i].language);
+}
+
+static const char *keyboard_keymap_for_index(int idx) {
+    if (idx < 0 || idx >= keyboard_lang_count())
+        return "us";
+    return keyboard_languages[idx].keymap;
+}
+
+static int keyboard_index_for_keymap(const char *code) {
+    if (!code || !code[0])
+        return 0;
+    for (int i = 0; keyboard_languages[i].language; i++) {
+        if (strcmp(keyboard_languages[i].keymap, code) == 0)
+            return i;
+    }
+    /* Prefix match for variants like us-acentos → English (US) */
+    for (int i = 0; keyboard_languages[i].language; i++) {
+        size_t len = strlen(keyboard_languages[i].keymap);
+        if (strncmp(keyboard_languages[i].keymap, code, len) == 0 &&
+            (code[len] == '\0' || code[len] == '-'))
+            return i;
+    }
+    return 0;
+}
+
+static void load_timezones(StrList *sl) {
     FILE *fp = popen("timedatectl list-timezones 2>/dev/null", "r");
     char line[128];
 
     if (fp) {
         while (fgets(line, sizeof line, fp)) {
-            g_strstrip(line);
+            char *nl = strchr(line, '\n');
+            if (nl)
+                *nl = '\0';
             if (line[0])
-                g_ptr_array_add(arr, g_strdup(line));
+                strlist_add(sl, line);
         }
         pclose(fp);
     }
-
-    if (arr->len == 0) {
-        g_ptr_array_add(arr, g_strdup("UTC"));
-        g_ptr_array_add(arr, g_strdup("America/New_York"));
-        g_ptr_array_add(arr, g_strdup("Europe/London"));
+    if (sl->n == 0) {
+        strlist_add(sl, "UTC");
+        strlist_add(sl, "America/New_York");
+        strlist_add(sl, "Europe/London");
     }
-
-    return arr;
 }
 
-static int ptr_index(GPtrArray *arr, const char *value) {
-    for (guint i = 0; i < arr->len; i++) {
-        if (g_strcmp0(g_ptr_array_index(arr, i), value) == 0)
-            return (int)i;
+static int strlist_index(const StrList *sl, const char *value) {
+    for (int i = 0; i < sl->n; i++) {
+        if (strcmp(sl->items[i], value) == 0)
+            return i;
     }
     return 0;
 }
 
 static int run_cmd(const char *cmd) {
-    int rc = system(cmd);
-    return rc;
+    return system(cmd);
 }
 
 static void apply_keymap(const char *code) {
@@ -152,173 +294,477 @@ static void apply_keymap(const char *code) {
     snprintf(cmd, sizeof cmd, "localectl set-keymap %s", code);
     if (run_cmd(cmd) != 0)
         return;
-
     snprintf(cmd, sizeof cmd, "localectl set-x11-keymap %s", code);
     run_cmd(cmd);
-
     snprintf(cmd, sizeof cmd, "setxkbmap %s", code);
     run_cmd(cmd);
 }
 
 static void apply_timezone(const char *tz) {
     char cmd[512];
-
     snprintf(cmd, sizeof cmd, "timedatectl set-timezone %s", tz);
     run_cmd(cmd);
 }
 
-static void on_keymap_changed(GObject *obj, GParamSpec *pspec, gpointer user_data) {
-    AppState *state = user_data;
-    guint selected;
-    const char *code;
+static void bump_panel_rev(void) {
+    Atom rev_atom = XInternAtom(dpy, "_BR8_PANEL_REV", False);
+    unsigned long rev = 1;
+    Atom actual;
+    int fmt;
+    unsigned long n, bytes;
+    unsigned long *data = NULL;
 
-    (void)obj;
-    (void)pspec;
-
-    if (state->applying)
-        return;
-
-    selected = gtk_drop_down_get_selected(GTK_DROP_DOWN(state->kb_dropdown));
-    if (selected >= state->kb_codes->len)
-        return;
-
-    code = g_ptr_array_index(state->kb_codes, selected);
-    apply_keymap(code);
+    if (XGetWindowProperty(dpy, root, rev_atom, 0, 8, False, XA_CARDINAL,
+            &actual, &fmt, &n, &bytes, (unsigned char **)&data) == Success && data && n > 0)
+        rev = data[0] + 1;
+    if (data)
+        XFree(data);
+    XChangeProperty(dpy, root, rev_atom, XA_CARDINAL, 32, PropModeReplace,
+        (unsigned char *)&rev, 1);
+    XFlush(dpy);
 }
 
-static void on_timezone_changed(GObject *obj, GParamSpec *pspec, gpointer user_data) {
-    AppState *state = user_data;
-    guint selected;
-    const char *tz;
+static void refresh_desktop(void) {
+    char cmd[512];
 
-    (void)obj;
-    (void)pspec;
+    snprintf(cmd, sizeof cmd,
+        "command -v feh >/dev/null && feh --bg-fill '%s' 2>/dev/null; "
+        "command -v xsetroot >/dev/null && xsetroot -solid '#1e2030'",
+        WALLPAPER);
+    run_cmd(cmd);
+    bump_panel_rev();
+}
 
-    if (state->applying)
-        return;
+static void apply_settings(void) {
+    const char *kb = keyboard_keymap_for_index(app.kb_sel);
+    const char *tz = app.tz.items[app.tz_sel];
 
-    selected = gtk_drop_down_get_selected(GTK_DROP_DOWN(state->tz_dropdown));
-    if (selected >= state->tz_names->len)
-        return;
-
-    tz = g_ptr_array_index(state->tz_names, selected);
+    apply_keymap(kb);
     apply_timezone(tz);
+    refresh_desktop();
 }
 
-static GtkWidget *make_setting_row(const char *label_text, GtkWidget *dropdown) {
-    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
-    GtkWidget *label = gtk_label_new(label_text);
-
-    gtk_widget_add_css_class(box, "setting-row");
-    gtk_widget_add_css_class(label, "setting-label");
-    gtk_label_set_xalign(GTK_LABEL(label), 0.0f);
-    gtk_widget_set_halign(dropdown, GTK_ALIGN_FILL);
-
-    gtk_box_append(GTK_BOX(box), label);
-    gtk_box_append(GTK_BOX(box), dropdown);
-    return box;
+static StrList *active_list(void) {
+    if (app.active_combo == 1)
+        return &app.kb;
+    if (app.active_combo == 2)
+        return &app.tz;
+    return NULL;
 }
 
-static void on_startup(GtkApplication *app, gpointer user_data) {
-    (void)app;
-    (void)user_data;
-    load_css();
+static int active_selected(void) {
+    if (app.active_combo == 1)
+        return app.kb_sel;
+    if (app.active_combo == 2)
+        return app.tz_sel;
+    return 0;
 }
 
-static void activate(GtkApplication *app, gpointer user_data) {
-    GtkWidget *window;
-    GtkWidget *outer;
-    GtkWidget *title;
-    GtkWidget *subtitle;
-    GtkWidget *settings;
-    GtkStringList *kb_list;
-    GtkStringList *tz_list;
+static void set_active_selected(int idx) {
+    if (app.active_combo == 1)
+        app.kb_sel = idx;
+    else if (app.active_combo == 2)
+        app.tz_sel = idx;
+}
+
+static void hide_popup(void) {
+    if (!app.popup_visible)
+        return;
+    XUnmapWindow(dpy, app.popup);
+    app.popup_visible = 0;
+    app.active_combo = 0;
+    draw_all();
+}
+
+static void popup_geom(int *px, int *py) {
+    int combo_y = app.active_combo == 1 ? layout.kb_combo_y : layout.tz_combo_y;
+    *px = win_x + MARGIN;
+    *py = win_y + combo_y + COMBO_H + 4;
+}
+
+static void draw_popup(void) {
+    StrList *sl = active_list();
+    int sel;
+    int x, y;
+
+    if (!sl || !app.popup_visible)
+        return;
+
+    popup_geom(&x, &y);
+    XMoveResizeWindow(dpy, app.popup, x, y, POPUP_W, POPUP_H);
+
+    XSetForeground(dpy, gc, rgb(POPUP_BG_R, POPUP_BG_G, POPUP_BG_B));
+    XFillRectangle(dpy, app.popup, gc, 0, 0, POPUP_W, POPUP_H);
+
+    sel = active_selected();
+    for (int row = 0; row < POPUP_VISIBLE; row++) {
+        int idx = app.popup_scroll + row;
+        int y0 = row * POPUP_ITEM_H;
+        if (idx >= sl->n)
+            break;
+        if (idx == sel) {
+            XSetForeground(dpy, gc, rgb(120, 100, 180));
+            XFillRectangle(dpy, app.popup, gc, 0, y0, POPUP_W, POPUP_ITEM_H);
+        }
+        xft_draw(app.popup, 12, y0 + text_baseline(POPUP_ITEM_H, body_font),
+            sl->items[idx], 255, 255, 255, body_font);
+    }
+}
+
+static void show_popup(int combo) {
+    StrList *sl;
+    int sel;
+
+    hide_popup();
+    app.active_combo = combo;
+    sl = active_list();
+    if (!sl || sl->n == 0)
+        return;
+
+    sel = active_selected();
+    app.popup_scroll = sel - POPUP_VISIBLE / 2;
+    if (app.popup_scroll < 0)
+        app.popup_scroll = 0;
+    if (app.popup_scroll > sl->n - POPUP_VISIBLE)
+        app.popup_scroll = sl->n - POPUP_VISIBLE;
+    if (app.popup_scroll < 0)
+        app.popup_scroll = 0;
+
+    app.popup_visible = 1;
+    draw_popup();
+    XMapRaised(dpy, app.popup);
+}
+
+static int font_line_h(XftFont *font, int extra) {
+    if (!font)
+        return 16 + extra;
+    return font->height + extra;
+}
+
+static void compute_layout(void) {
+    int y = MARGIN;
+
+    layout.title_y = y + text_baseline(title_font ? title_font->height : 42, title_font);
+    y += font_line_h(title_font, TITLE_SUBTITLE_GAP);
+
+    layout.subtitle_y = y + text_baseline(body_font ? body_font->ascent : 12, body_font);
+    y += font_line_h(body_font, 6) * 3;
+    y += SUBTITLE_SETTINGS_GAP;
+
+    layout.kb_label_y = y + text_baseline(label_font ? label_font->ascent : 12, label_font);
+    y += font_line_h(label_font, LABEL_COMBO_GAP);
+    layout.kb_combo_y = y;
+    y += COMBO_H + SETTING_ROW_GAP;
+
+    layout.tz_label_y = y + text_baseline(label_font ? label_font->ascent : 12, label_font);
+    y += font_line_h(label_font, LABEL_COMBO_GAP);
+    layout.tz_combo_y = y;
+    y += COMBO_H + SETTINGS_APPLY_GAP;
+
+    layout.apply_y = y;
+}
+
+static int combo_y_for(int combo) {
+    return combo == 1 ? layout.kb_combo_y : layout.tz_combo_y;
+}
+
+static void draw_subtitle(Drawable draw, int x, int y, XftFont *font) {
+    static const char *lines[] = {
+        "While Backroot is in prerelease you can use this application to",
+        "configure your system. In the future there will be a proper app",
+        "for this.",
+        NULL
+    };
+    int line_y = y;
+
+    for (int i = 0; lines[i]; i++) {
+        xft_draw(draw, x, line_y, lines[i], 255, 255, 255, font);
+        line_y += font ? font->height + 4 : 16;
+    }
+}
+
+static void draw_combo(int label_y, int combo_y, const char *label, const StrList *sl, int sel) {
+    int x0 = MARGIN;
+    int w = WIN_W - MARGIN * 2;
+
+    xft_draw(win, x0, label_y, label, 255, 255, 255, label_font);
+
+    XSetForeground(dpy, gc, rgb(255, 255, 255));
+    XDrawRectangle(dpy, win, gc, x0, combo_y, w, COMBO_H);
+
+    XSetForeground(dpy, gc, rgb(255, 255, 255));
+    XFillRectangle(dpy, win, gc, x0 + 1, combo_y + 1, w - 2, COMBO_H - 2);
+    XSetForeground(dpy, gc, rgb(BG_R, BG_G, BG_B));
+    XFillRectangle(dpy, win, gc, x0 + 2, combo_y + 2, w - 4, COMBO_H - 4);
+
+    if (sel >= 0 && sel < sl->n)
+        xft_draw(win, x0 + 12, combo_y + text_baseline(COMBO_H, body_font),
+            sl->items[sel], 255, 255, 255, body_font);
+
+    xft_draw(win, x0 + w - 24, combo_y + text_baseline(COMBO_H, body_font),
+        "v", 255, 255, 255, body_font);
+}
+
+static void draw_apply_button(void) {
+    int y = layout.apply_y;
+    int x = MARGIN;
+    int fg_r, fg_g, fg_b;
+    int bg_r, bg_g, bg_b;
+
+    if (app.apply_hover) {
+        bg_r = 255;
+        bg_g = 255;
+        bg_b = 255;
+        fg_r = BG_R;
+        fg_g = BG_G;
+        fg_b = BG_B;
+    } else {
+        bg_r = BG_R;
+        bg_g = BG_G;
+        bg_b = BG_B;
+        fg_r = 255;
+        fg_g = 255;
+        fg_b = 255;
+    }
+
+    XSetForeground(dpy, gc, rgb(255, 255, 255));
+    XDrawRectangle(dpy, win, gc, x, y, APPLY_W, APPLY_H);
+    XSetForeground(dpy, gc, rgb(bg_r, bg_g, bg_b));
+    XFillRectangle(dpy, win, gc, x + 1, y + 1, APPLY_W - 2, APPLY_H - 2);
+    xft_draw(win, x + 24, y + text_baseline(APPLY_H, label_font), "Apply",
+        fg_r, fg_g, fg_b, label_font);
+}
+
+static void draw_all(void) {
+    compute_layout();
+
+    XSetForeground(dpy, gc, rgb(BG_R, BG_G, BG_B));
+    XFillRectangle(dpy, win, gc, 0, 0, WIN_W, WIN_H);
+
+    xft_draw(win, MARGIN, layout.title_y, "Backroot Hello", 255, 255, 255, title_font);
+    draw_subtitle(win, MARGIN, layout.subtitle_y, body_font);
+
+    draw_combo(layout.kb_label_y, layout.kb_combo_y, "Keyboard layout", &app.kb, app.kb_sel);
+    draw_combo(layout.tz_label_y, layout.tz_combo_y, "Timezone", &app.tz, app.tz_sel);
+    draw_apply_button();
+
+    if (app.popup_visible)
+        draw_popup();
+}
+
+static int point_in_combo(int combo, int x, int y) {
+    int x0 = MARGIN;
+    int w = WIN_W - MARGIN * 2;
+    int y0 = combo_y_for(combo);
+    return x >= x0 && x < x0 + w && y >= y0 && y < y0 + COMBO_H;
+}
+
+static int point_in_apply(int x, int y) {
+    int y0 = layout.apply_y;
+    return x >= MARGIN && x < MARGIN + APPLY_W && y >= y0 && y < y0 + APPLY_H;
+}
+
+static int popup_item_at(int py) {
+    int row = py / POPUP_ITEM_H;
+    if (row < 0 || row >= POPUP_VISIBLE)
+        return -1;
+    return app.popup_scroll + row;
+}
+
+static void popup_scroll_by(int delta) {
+    StrList *sl = active_list();
+    if (!sl)
+        return;
+    app.popup_scroll += delta;
+    if (app.popup_scroll < 0)
+        app.popup_scroll = 0;
+    if (app.popup_scroll > sl->n - POPUP_VISIBLE)
+        app.popup_scroll = sl->n - POPUP_VISIBLE;
+    if (app.popup_scroll < 0)
+        app.popup_scroll = 0;
+    draw_popup();
+}
+
+static void set_wm_name(void) {
+    Atom net_wm_name = XInternAtom(dpy, "_NET_WM_NAME", False);
+    Atom utf8 = XInternAtom(dpy, "UTF8_STRING", False);
+    const char *name = "Backroot Hello";
+    XChangeProperty(dpy, win, net_wm_name, utf8, 8, PropModeReplace,
+        (unsigned char *)name, (int)strlen(name));
+    XStoreName(dpy, win, name);
+}
+
+static void open_fonts(void) {
+    static const char *const title_names[] = {
+        "Segoe UI Light-42:antialias=true",
+        "Cantarell Light-42:antialias=true",
+        "DejaVu Sans-42:antialias=true",
+        NULL
+    };
+    static const char *const body_names[] = {
+        "Segoe UI-10:antialias=true",
+        "Cantarell-10:antialias=true",
+        "DejaVu Sans-10:antialias=true",
+        NULL
+    };
+    static const char *const label_names[] = {
+        "Segoe UI Semibold-11:antialias=true",
+        "Segoe UI-11:antialias=true",
+        "Cantarell-11:antialias=true",
+        NULL
+    };
+
+    for (int i = 0; title_names[i]; i++) {
+        title_font = XftFontOpenName(dpy, screen, title_names[i]);
+        if (title_font && title_font->ascent > 0)
+            break;
+        if (title_font) {
+            XftFontClose(dpy, title_font);
+            title_font = NULL;
+        }
+    }
+    for (int i = 0; body_names[i]; i++) {
+        body_font = XftFontOpenName(dpy, screen, body_names[i]);
+        if (body_font && body_font->ascent > 0)
+            break;
+        if (body_font) {
+            XftFontClose(dpy, body_font);
+            body_font = NULL;
+        }
+    }
+    for (int i = 0; label_names[i]; i++) {
+        label_font = XftFontOpenName(dpy, screen, label_names[i]);
+        if (label_font && label_font->ascent > 0)
+            break;
+        if (label_font) {
+            XftFontClose(dpy, label_font);
+            label_font = NULL;
+        }
+    }
+}
+
+int main(void) {
     char *cur_kb;
     char *cur_tz;
-    AppState *state = user_data;
+    XSetWindowAttributes attr;
+    XWMHints hints;
+    XClassHint class_hint = {
+        .res_name = (char *)"backroot-hello",
+        .res_class = (char *)"BackrootHello",
+    };
 
-    window = gtk_application_window_new(app);
-    gtk_window_set_title(GTK_WINDOW(window), "Backroot Hello");
-    gtk_window_set_default_size(GTK_WINDOW(window), 520, 420);
-    gtk_widget_add_css_class(window, "hello-window");
+    dpy = XOpenDisplay(NULL);
+    if (!dpy) {
+        fprintf(stderr, "backroot-hello: cannot open display\n");
+        return 1;
+    }
 
-    outer = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
-    gtk_widget_add_css_class(outer, "hello-content");
-    gtk_widget_set_margin_start(outer, 36);
-    gtk_widget_set_margin_end(outer, 36);
-    gtk_widget_set_margin_top(outer, 36);
-    gtk_widget_set_margin_bottom(outer, 36);
+    XSetErrorHandler(NULL);
+    screen = DefaultScreen(dpy);
+    root = RootWindow(dpy, screen);
+    visual = DefaultVisual(dpy, screen);
+    cmap = DefaultColormap(dpy, screen);
+    open_fonts();
+    compute_layout();
 
-    title = gtk_label_new("Backroot Hello");
-    gtk_widget_add_css_class(title, "hello-title");
-    gtk_label_set_xalign(GTK_LABEL(title), 0.0f);
-    gtk_widget_set_halign(title, GTK_ALIGN_START);
-
-    subtitle = gtk_label_new(
-        "While Backroot is in prerelease you can use this application to configure "
-        "your system. In the future there will be a proper app for this.");
-    gtk_widget_add_css_class(subtitle, "hello-subtitle");
-    gtk_label_set_xalign(GTK_LABEL(subtitle), 0.0f);
-    gtk_label_set_wrap(GTK_LABEL(subtitle), TRUE);
-    gtk_label_set_wrap_mode(GTK_LABEL(subtitle), PANGO_WRAP_WORD);
-    gtk_widget_set_halign(subtitle, GTK_ALIGN_START);
-
-    kb_list = gtk_string_list_new(NULL);
-    for (guint i = 0; i < state->kb_codes->len; i++)
-        gtk_string_list_append(kb_list, g_ptr_array_index(state->kb_codes, i));
-
-    tz_list = gtk_string_list_new(NULL);
-    for (guint i = 0; i < state->tz_names->len; i++)
-        gtk_string_list_append(tz_list, g_ptr_array_index(state->tz_names, i));
-
-    state->kb_dropdown = gtk_drop_down_new(G_LIST_MODEL(kb_list), NULL);
-    state->tz_dropdown = gtk_drop_down_new(G_LIST_MODEL(tz_list), NULL);
-    gtk_widget_add_css_class(state->kb_dropdown, "hello-dropdown");
-    gtk_widget_add_css_class(state->tz_dropdown, "hello-dropdown");
-
+    load_keyboard_languages(&app.kb);
+    load_timezones(&app.tz);
     cur_kb = current_keymap();
     cur_tz = current_timezone();
+    app.kb_sel = keyboard_index_for_keymap(cur_kb);
+    app.tz_sel = strlist_index(&app.tz, cur_tz);
+    free(cur_kb);
+    free(cur_tz);
 
-    state->applying = TRUE;
-    gtk_drop_down_set_selected(GTK_DROP_DOWN(state->kb_dropdown), (guint)ptr_index(state->kb_codes, cur_kb));
-    gtk_drop_down_set_selected(GTK_DROP_DOWN(state->tz_dropdown), (guint)ptr_index(state->tz_names, cur_tz));
-    state->applying = FALSE;
+    win = XCreateSimpleWindow(dpy, root, 80, 60, WIN_W, WIN_H, 0,
+        BlackPixel(dpy, screen), rgb(BG_R, BG_G, BG_B));
+    attr.event_mask = ExposureMask | StructureNotifyMask | ButtonPressMask |
+        PointerMotionMask;
+    XChangeWindowAttributes(dpy, win, CWEventMask, &attr);
 
-    g_free(cur_kb);
-    g_free(cur_tz);
+    hints.flags = StateHint;
+    hints.initial_state = NormalState;
+    XSetWMHints(dpy, win, &hints);
+    XSetClassHint(dpy, win, &class_hint);
+    set_wm_name();
 
-    g_signal_connect(state->kb_dropdown, "notify::selected", G_CALLBACK(on_keymap_changed), state);
-    g_signal_connect(state->tz_dropdown, "notify::selected", G_CALLBACK(on_timezone_changed), state);
+    gc = XCreateGC(dpy, win, 0, NULL);
 
-    settings = gtk_box_new(GTK_ORIENTATION_VERTICAL, 20);
-    gtk_widget_add_css_class(settings, "hello-settings");
-    gtk_box_append(GTK_BOX(settings), make_setting_row("Keyboard layout", state->kb_dropdown));
-    gtk_box_append(GTK_BOX(settings), make_setting_row("Timezone", state->tz_dropdown));
+    app.popup = XCreateSimpleWindow(dpy, root, 0, 0, POPUP_W, POPUP_H, 1,
+        rgb(255, 255, 255), rgb(POPUP_BG_R, POPUP_BG_G, POPUP_BG_B));
+    attr.override_redirect = True;
+    attr.event_mask = ExposureMask | ButtonPressMask | ButtonReleaseMask;
+    XChangeWindowAttributes(dpy, app.popup, CWOverrideRedirect | CWEventMask, &attr);
+    XUnmapWindow(dpy, app.popup);
 
-    gtk_box_append(GTK_BOX(outer), title);
-    gtk_box_append(GTK_BOX(outer), subtitle);
-    gtk_box_append(GTK_BOX(outer), settings);
+    XMapRaised(dpy, win);
+    draw_all();
 
-    gtk_window_set_child(GTK_WINDOW(window), outer);
-    gtk_window_present(GTK_WINDOW(window));
-}
+    int xfd = ConnectionNumber(dpy);
+    while (1) {
+        fd_set fds;
+        FD_ZERO(&fds);
+        FD_SET(xfd, &fds);
+        struct timeval tv = { .tv_sec = 0, .tv_usec = 200000 };
+        select(xfd + 1, &fds, NULL, NULL, &tv);
 
-int main(int argc, char **argv) {
-    GtkApplication *app;
-    AppState state = {0};
-    int status;
+        while (XPending(dpy)) {
+            XEvent ev;
+            XNextEvent(dpy, &ev);
 
-    state.kb_codes = list_keymaps();
-    state.tz_names = list_timezones();
+            if (ev.type == ConfigureNotify && ev.xconfigure.window == win) {
+                win_x = ev.xconfigure.x;
+                win_y = ev.xconfigure.y;
+                if (app.popup_visible)
+                    draw_popup();
+            } else if (ev.type == Expose) {
+                if (ev.xexpose.count == 0) {
+                    if (ev.xexpose.window == win)
+                        draw_all();
+                    else if (ev.xexpose.window == app.popup)
+                        draw_popup();
+                }
+            } else if (ev.type == MotionNotify && ev.xmotion.window == win) {
+                compute_layout();
+                int hover = point_in_apply((int)ev.xmotion.x, (int)ev.xmotion.y);
+                if (hover != app.apply_hover) {
+                    app.apply_hover = hover;
+                    draw_all();
+                }
+            } else if (ev.type == ButtonPress) {
+                if (ev.xbutton.button == Button4) {
+                    if (ev.xbutton.window == app.popup)
+                        popup_scroll_by(-1);
+                } else if (ev.xbutton.button == Button5) {
+                    if (ev.xbutton.window == app.popup)
+                        popup_scroll_by(1);
+                } else if (ev.xbutton.window == app.popup) {
+                    StrList *sl = active_list();
+                    int idx = popup_item_at((int)ev.xbutton.y);
+                    if (sl && idx >= 0 && idx < sl->n) {
+                        set_active_selected(idx);
+                        hide_popup();
+                        draw_all();
+                    }
+                } else if (ev.xbutton.window == win) {
+                    compute_layout();
+                    if (point_in_apply((int)ev.xbutton.x, (int)ev.xbutton.y)) {
+                        apply_settings();
+                    } else if (point_in_combo(1, (int)ev.xbutton.x, (int)ev.xbutton.y)) {
+                        show_popup(1);
+                    } else if (point_in_combo(2, (int)ev.xbutton.x, (int)ev.xbutton.y)) {
+                        show_popup(2);
+                    } else if (app.popup_visible) {
+                        hide_popup();
+                    }
+                } else if (app.popup_visible) {
+                    hide_popup();
+                }
+            }
+        }
+    }
 
-    app = gtk_application_new(APP_ID, G_APPLICATION_DEFAULT_FLAGS);
-    g_signal_connect(app, "startup", G_CALLBACK(on_startup), NULL);
-    g_signal_connect(app, "activate", G_CALLBACK(activate), &state);
-
-    status = g_application_run(G_APPLICATION(app), argc, argv);
-
-    g_clear_pointer(&state.kb_codes, g_ptr_array_unref);
-    g_clear_pointer(&state.tz_names, g_ptr_array_unref);
-    g_object_unref(app);
-    return status;
+    strlist_free(&app.kb);
+    strlist_free(&app.tz);
+    return 0;
 }

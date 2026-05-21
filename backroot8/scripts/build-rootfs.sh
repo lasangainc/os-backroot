@@ -94,7 +94,7 @@ pacman -S --noconfirm --needed \
     linux linux-firmware \
     base base-devel \
     xorg-server xorg-xinit xorg-xrandr xf86-video-vesa \
-    xterm dolphin feh fbida nettle xorg-fonts-misc libxft ttf-dejavu gtk4 x11vnc unzip \
+    xterm dolphin feh fbida nettle xorg-fonts-misc libxft ttf-dejavu x11vnc unzip \
     systemd-sysvcompat \
     sudo networkmanager \
     mkinitcpio grub efibootmgr \
@@ -156,8 +156,6 @@ sudo install -Dm755 "$ROOT/src/br8-wm/br8-wm" "$MNT/usr/local/bin/br8-wm"
 sudo install -Dm755 "$ROOT/src/br8-panel/br8-panel" "$MNT/usr/local/bin/br8-panel"
 sudo install -Dm755 "$ROOT/src/br8-start/br8-start" "$MNT/usr/local/bin/br8-start"
 sudo install -Dm755 "$ROOT/src/backroot-hello/backroot-hello" "$MNT/usr/local/bin/backroot-hello"
-sudo install -Dm644 "$ROOT/rootfs-overlay/usr/share/backroot/backroot-hello/backroot-hello.css" \
-    "$MNT/usr/share/backroot/backroot-hello/backroot-hello.css"
 sudo install -Dm644 "$ROOT/rootfs-overlay/usr/share/backroot/README" \
     "$MNT/usr/share/backroot/README"
 sudo install -Dm644 "$ROOT/rootfs-overlay/usr/share/applications/backroot-hello.desktop" \
