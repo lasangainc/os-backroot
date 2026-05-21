@@ -98,6 +98,18 @@ sudo ./scripts/build-rootfs.sh
 Browser: `http://localhost:6080/vnc.html?autoconnect=1&resize=scale`  
 SSH (debug): `ssh -p 2222 root@localhost` password `backroot8`
 
+### Post-task: noVNC for developer testing
+
+When you finish a task (especially WM/panel, overlay, or guest-session changes), ensure the developer can test in the browser:
+
+1. **Goal:** QEMU is running with VNC exposed, and noVNC (websockify) is serving `http://localhost:6080`.
+2. **If already up:** If `./backroot8/scripts/run-vm-gui.sh` (or equivalent QEMU + websockify) is already running and the guest reflects your changes (e.g. after hot-deploy), **do not restart** — leave VM and noVNC as they are.
+3. **If not running:** Start with `./backroot8/scripts/run-vm-gui.sh` (builds disk image first if needed).
+4. **If QEMU must restart** (new image, kernel/overlay change, broken session): use the clean restart steps below, then confirm port 6080 responds.
+5. **In PRs / summaries:** Include the test URL: `http://localhost:6080/vnc.html?autoconnect=1&resize=scale`.
+
+Quick check: `curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:6080/` should return `200` when noVNC is up.
+
 ### Hot-deploy binaries into running VM
 
 ```bash
@@ -172,6 +184,7 @@ After WM/panel changes:
 3. In VNC: drag window, min/max/close, right-click menu (terminal and Dolphin), minimize → taskbar restore.
 4. Open second terminal — two taskbar icons, no crash, single title bar each.
 5. Confirm `br8-panel` stays running: `ps aux | grep br8-panel` in guest.
+6. **Leave noVNC available** for the developer — see [Post-task: noVNC for developer testing](#post-task-novnc-for-developer-testing); do not tear down a working VM/noVNC session without cause.
 
 ## References
 
@@ -191,6 +204,7 @@ After WM/panel changes:
 2. **First-time image build:** `mkdir -p backroot8/vm && cd backroot8 && sudo ./scripts/build-rootfs.sh` — creates a ~4 GB Arch ext4 disk image under `backroot8/vm/`. Requires network for Arch bootstrap tarball download. The `vm/` directory must exist before running the script (it is gitignored).
 3. **Start VM + noVNC:** `./backroot8/scripts/run-vm-gui.sh` — boots QEMU (VNC :5902) and starts websockify on port 6080.
 4. **Browser access:** `http://localhost:6080/vnc.html?autoconnect=1&resize=scale`
+5. **End of every task:** Follow [Post-task: noVNC for developer testing](#post-task-novnc-for-developer-testing) so the developer can verify changes in the browser without restarting unnecessarily.
 
 ### Gotchas discovered during setup
 
