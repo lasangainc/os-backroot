@@ -86,7 +86,6 @@ static void emblem_init(void) {
     GC egc = XCreateGC(dpy, emblem_pm, 0, NULL);
     XPutImage(dpy, emblem_pm, egc, xi, 0, 0, 0, 0, disp, disp);
     XFreeGC(dpy, egc);
-    XFree(xi->data);
     XDestroyImage(xi);
     emblem_ready = 1;
 }
