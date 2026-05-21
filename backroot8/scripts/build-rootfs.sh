@@ -163,6 +163,19 @@ sudo install -Dm644 "$ROOT/rootfs-overlay/etc/profile.d/backroot8.sh" "$MNT/etc/
 sudo install -Dm644 "$ROOT/rootfs-overlay/etc/motd" "$MNT/etc/motd"
 sudo install -Dm644 "$ROOT/rootfs-overlay/etc/systemd/system/backroot8-desktop.service" \
     "$MNT/etc/systemd/system/backroot8-desktop.service"
+sudo install -Dm644 "$ROOT/rootfs-overlay/etc/fonts/conf.d/99-segoe-ui.conf" \
+    "$MNT/etc/fonts/conf.d/99-segoe-ui.conf"
+
+log "Installing Segoe UI font (Microsoft Segoe UI Variable)..."
+SEGOE_TMP="$(mktemp -d)"
+curl -fsSL -o "$SEGOE_TMP/segoe-ui-variable.zip" "https://aka.ms/SegoeUIVariable"
+unzip -q "$SEGOE_TMP/segoe-ui-variable.zip" -d "$SEGOE_TMP/extract"
+sudo mkdir -p "$MNT/usr/share/fonts/segoe-ui" "$MNT/usr/share/licenses/segoe-ui-variable"
+sudo install -Dm644 "$SEGOE_TMP/extract"/Segoe*.ttf "$MNT/usr/share/fonts/segoe-ui/"
+sudo install -Dm644 "$SEGOE_TMP/extract/EULA.txt" "$MNT/usr/share/licenses/segoe-ui-variable/LICENSE"
+sudo arch-chroot "$MNT" fc-cache -f
+rm -rf "$SEGOE_TMP"
+
 sudo arch-chroot "$MNT" systemctl enable backroot8-desktop.service sshd 2>/dev/null || true
 
 sudo mkdir -p "$MNT/root"
