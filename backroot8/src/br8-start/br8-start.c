@@ -390,12 +390,22 @@ static void begin_open_animation(void) {
     mark_dirty();
 }
 
+static void sync_start_win_size(void) {
+    XWindowAttributes ra;
+    XGetWindowAttributes(dpy, root, &ra);
+    root_h = ra.height;
+    win_w = ra.width;
+    win_h = ra.height;
+    XMoveResizeWindow(dpy, start_win, 0, 0, win_w, win_h);
+}
+
 static void show_menu(void) {
     if (visible)
         return;
     scroll_y = 0;
     visible = 1;
     ctx_visible = 0;
+    sync_start_win_size();
     XMapRaised(dpy, start_win);
     begin_open_animation();
     draw_all();
@@ -1287,10 +1297,10 @@ static void draw_all(void) {
 
     XWindowAttributes ra;
     XGetWindowAttributes(dpy, root, &ra);
-    if (ra.width != win_w || ra.height != root_h) {
+    if (ra.width != win_w || ra.height != win_h) {
         root_h = ra.height;
         win_w = ra.width;
-        win_h = root_h;
+        win_h = ra.height;
         XMoveResizeWindow(dpy, start_win, 0, 0, win_w, win_h);
         invalidate_static();
         free_buffers();
@@ -1647,7 +1657,7 @@ int main(void) {
     XGetWindowAttributes(dpy, root, &ra);
     root_h = ra.height;
     win_w = ra.width;
-    win_h = root_h - PANEL_H;
+    win_h = root_h;
 
     start_win = XCreateSimpleWindow(dpy, root, 0, 0, win_w, win_h, 0, 0, pix_bg);
     XSetWindowAttributes attr;
