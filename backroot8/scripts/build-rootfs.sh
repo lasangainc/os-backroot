@@ -86,7 +86,7 @@ pacman -Sy --noconfirm
 pacman -S --noconfirm --needed \
     linux linux-firmware \
     base base-devel \
-    xorg-server xorg-xinit xorg-xrandr \
+    xorg-server xorg-xinit xorg-xrandr xf86-video-vesa \
     xfce4-terminal xterm dolphin feh nettle xorg-fonts-misc libxft ttf-dejavu \
     systemd-sysvcompat \
     sudo networkmanager \

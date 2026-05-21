@@ -19,7 +19,6 @@
 #define MENU_H (MENU_ITEMS * MENU_ITEM_H)
 #define BTN_W 30
 #define CLOSE_W 34
-#define TITLE_PAD_L 12
 #define MAX_TITLE 256
 
 typedef struct {
@@ -255,9 +254,19 @@ static void draw_title(Client *c) {
     if (!c->name[0])
         return;
 
-    int x = TITLE_PAD_L;
-    if (x + 200 > title_w - 4)
-        x = TITLE_PAD_L;
+    int len = (int)strlen(c->name);
+    int x = 6;
+    if (ui_font) {
+        XGlyphInfo ext;
+        XftTextExtentsUtf8(dpy, ui_font, (FcChar8 *)c->name, len, &ext);
+        x = (title_w - ext.xOff) / 2;
+        if (x < 6)
+            x = 6;
+        if (x + ext.xOff > title_w - 4)
+            x = title_w - ext.xOff - 4;
+        if (x < 6)
+            x = 6;
+    }
     xft_draw(c->title, x, text_baseline(TITLE_H), c->name, 255, 255, 255);
 }
 
