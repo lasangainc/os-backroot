@@ -64,6 +64,10 @@ static int emblem_ready;
 static DesktopIcon desktop_icons[MAX_DESKTOP_ICONS];
 static int ndesktop_icons;
 
+static Pixmap pixmap_from_rgba_scaled(const unsigned char *src, int sw, int sh, int dw, int dh);
+static Pixmap icon_from_png_file(const char *path);
+static Pixmap icon_from_file(const char *path);
+
 static unsigned long rgb_pixel(int r, int g, int b) {
     XColor c;
     c.red = (unsigned short)(r << 8);
@@ -276,12 +280,15 @@ static int resolve_icon_file(const char *icon_name, char *out, size_t n) {
     }
     static const char *const paths[] = {
         "/usr/share/pixmaps/%s.png",
+        "/usr/share/pixmaps/%s.xpm",
         "/usr/share/icons/hicolor/48x48/apps/%s.png",
         "/usr/share/icons/hicolor/32x32/apps/%s.png",
         "/usr/share/icons/hicolor/256x256/apps/%s.png",
+        "/usr/share/icons/hicolor/scalable/apps/%s.svg",
         "/usr/share/icons/Adwaita/48x48/apps/%s.png",
         "/usr/share/icons/breeze/apps/48x48/%s.png",
         "/usr/share/icons/breeze/apps/32x32/%s.png",
+        "/usr/share/icons/breeze/apps/48x48/%s.svg",
         NULL
     };
     for (int i = 0; paths[i]; i++) {
@@ -289,6 +296,150 @@ static int resolve_icon_file(const char *icon_name, char *out, size_t n) {
             return 1;
     }
     return 0;
+}
+
+static int xpm_color(const char *spec, int *r, int *g, int *b, int *a) {
+    if (!spec || strncmp(spec, "#", 1) != 0)
+        return 0;
+    unsigned long v = strtoul(spec + 1, NULL, 16);
+    if (strlen(spec + 1) >= 6) {
+        *r = (int)((v >> 16) & 0xff);
+        *g = (int)((v >> 8) & 0xff);
+        *b = (int)(v & 0xff);
+        *a = 255;
+        return 1;
+    }
+    return 0;
+}
+
+typedef struct {
+    char key[8];
+    int r, g, b, a;
+} XpmColor;
+
+static Pixmap icon_from_xpm_file(const char *path) {
+    FILE *f = fopen(path, "r");
+    if (!f)
+        return 0;
+    char line[4096];
+    int w = 0, h = 0, ncolors = 0, cpp = 0;
+    while (fgets(line, sizeof(line), f)) {
+        if (strstr(line, "static char") || strstr(line, "char *"))
+            continue;
+        if (line[0] == '"') {
+            char buf[64];
+            if (sscanf(line, "\" %63[^\"]\"", buf) == 1 &&
+                    sscanf(buf, "%d %d %d %d", &w, &h, &ncolors, &cpp) == 4)
+                break;
+        }
+    }
+    if (w <= 0 || h <= 0 || ncolors <= 0 || cpp <= 0 || cpp >= 8 || ncolors > 256) {
+        fclose(f);
+        return 0;
+    }
+
+    XpmColor colors[256];
+    int got = 0;
+    while (got < ncolors && fgets(line, sizeof(line), f)) {
+        char *q1 = strchr(line, '"');
+        if (!q1)
+            continue;
+        char *q2 = strchr(q1 + 1, '"');
+        if (!q2 || (size_t)(q2 - q1 - 1) < (size_t)cpp)
+            continue;
+        memcpy(colors[got].key, q1 + 1, (size_t)cpp);
+        colors[got].key[cpp] = '\0';
+        char *c = strstr(line, "c ");
+        if (!c)
+            continue;
+        c += 2;
+        while (*c == ' ' || *c == '\t')
+            c++;
+        if (strncmp(c, "None", 4) == 0) {
+            colors[got].r = colors[got].g = colors[got].b = 0;
+            colors[got].a = 0;
+        } else if (!xpm_color(c, &colors[got].r, &colors[got].g, &colors[got].b, &colors[got].a))
+            continue;
+        got++;
+    }
+    if (got < ncolors) {
+        fclose(f);
+        return 0;
+    }
+
+    unsigned char *rgba = calloc((size_t)w * (size_t)h, 4);
+    if (!rgba) {
+        fclose(f);
+        return 0;
+    }
+
+    int row = 0;
+    while (row < h && fgets(line, sizeof(line), f)) {
+        char *q1 = strchr(line, '"');
+        if (!q1)
+            continue;
+        char *q2 = strrchr(q1 + 1, '"');
+        if (!q2)
+            continue;
+        const char *p = q1 + 1;
+        if ((size_t)(q2 - p) < (size_t)(w * cpp))
+            continue;
+        for (int x = 0; x < w; x++) {
+            char key[8];
+            memcpy(key, p + (size_t)x * (size_t)cpp, (size_t)cpp);
+            key[cpp] = '\0';
+            int ci = 0;
+            for (int k = 0; k < ncolors; k++) {
+                if (memcmp(colors[k].key, key, (size_t)cpp) == 0) {
+                    ci = k;
+                    break;
+                }
+            }
+            size_t off = (size_t)row * (size_t)w + (size_t)x;
+            rgba[off * 4] = (unsigned char)colors[ci].r;
+            rgba[off * 4 + 1] = (unsigned char)colors[ci].g;
+            rgba[off * 4 + 2] = (unsigned char)colors[ci].b;
+            rgba[off * 4 + 3] = (unsigned char)colors[ci].a;
+        }
+        row++;
+    }
+    fclose(f);
+    if (row < h) {
+        free(rgba);
+        return 0;
+    }
+
+    Pixmap pm = pixmap_from_rgba_scaled(rgba, w, h, ICON_SZ, ICON_SZ);
+    free(rgba);
+    return pm;
+}
+
+static Pixmap icon_from_svg_file(const char *path) {
+    char tmp[] = "/tmp/br8icXXXXXX.png";
+    int fd = mkstemps(tmp, 4);
+    if (fd < 0)
+        return 0;
+    close(fd);
+    char cmd[768];
+    snprintf(cmd, sizeof(cmd),
+        "rsvg-convert -w %d -h %d -o '%s' '%s' 2>/dev/null",
+        ICON_SZ, ICON_SZ, tmp, path);
+    if (system(cmd) != 0) {
+        unlink(tmp);
+        return 0;
+    }
+    Pixmap pm = icon_from_png_file(tmp);
+    unlink(tmp);
+    return pm;
+}
+
+static Pixmap icon_from_file(const char *path) {
+    size_t len = strlen(path);
+    if (len >= 4 && strcmp(path + len - 4, ".svg") == 0)
+        return icon_from_svg_file(path);
+    if (len >= 4 && strcmp(path + len - 4, ".xpm") == 0)
+        return icon_from_xpm_file(path);
+    return icon_from_png_file(path);
 }
 
 static Pixmap pixmap_from_rgba_scaled(const unsigned char *src, int sw, int sh,
@@ -411,11 +562,11 @@ static Pixmap icon_from_desktop(Window client) {
     const char *icon_name = icon_name_for_class(res_class, res_name);
     char path[512];
     if (icon_name && resolve_icon_file(icon_name, path, sizeof(path)))
-        return icon_from_png_file(path);
+        return icon_from_file(path);
     if (res_class[0] && resolve_icon_file(res_class, path, sizeof(path)))
-        return icon_from_png_file(path);
+        return icon_from_file(path);
     if (res_name[0] && resolve_icon_file(res_name, path, sizeof(path)))
-        return icon_from_png_file(path);
+        return icon_from_file(path);
     return 0;
 }
 
