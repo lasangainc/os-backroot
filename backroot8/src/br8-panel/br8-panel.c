@@ -10,6 +10,8 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+#include <fcntl.h>
+#include <sys/wait.h>
 #include <sys/select.h>
 
 #include "emblem.h"
@@ -41,7 +43,7 @@ static XftFont *ui_font;
 static Visual *visual;
 static Colormap xft_cmap;
 static int panel_w;
-static Atom br8_frame, br8_client, br8_panel_rev, br8_activate;
+static Atom br8_frame, br8_client, br8_panel_rev, br8_activate, br8_start_menu;
 static Atom net_wm_icon, net_wm_name, utf8_string;
 static TaskBtn tasks[MAX_TASKS];
 static int ntasks;
@@ -321,6 +323,46 @@ static TaskBtn *task_at(int px) {
     return NULL;
 }
 
+static unsigned long read_start_menu_rev(void) {
+    Atom actual;
+    int fmt;
+    unsigned long n, bytes;
+    unsigned long *data = NULL;
+    unsigned long rev = 0;
+
+    if (XGetWindowProperty(dpy, root, br8_start_menu, 0, 8, False, XA_CARDINAL,
+            &actual, &fmt, &n, &bytes, (unsigned char **)&data) == Success && data && n > 0)
+        rev = data[0];
+    if (data)
+        XFree(data);
+    return rev;
+}
+
+static void toggle_start_menu(void) {
+    unsigned long rev;
+    int fd;
+    char c = 't';
+
+    rev = read_start_menu_rev() + 1;
+    XChangeProperty(dpy, root, br8_start_menu, XA_CARDINAL, 32, PropModeReplace,
+        (unsigned char *)&rev, 1);
+    XFlush(dpy);
+
+    fd = open("/tmp/br8-start-menu.ctl", O_WRONLY | O_NONBLOCK);
+    if (fd >= 0) {
+        if (write(fd, &c, 1) == 1) {
+            close(fd);
+            return;
+        }
+        close(fd);
+    }
+
+    if (fork() == 0) {
+        execl("/usr/local/bin/br8-start-menu", "br8-start-menu", "--toggle", NULL);
+        _exit(1);
+    }
+}
+
 static void activate_task(TaskBtn *t) {
     /* Tell WM to restore (property is reliable; ClientMessage often is not). */
     XChangeProperty(dpy, root, br8_activate, XA_WINDOW, 32, PropModeReplace,
@@ -378,6 +420,7 @@ int main(void) {
     br8_client = XInternAtom(dpy, "_BR8_CLIENT", False);
     br8_panel_rev = XInternAtom(dpy, "_BR8_PANEL_REV", False);
     br8_activate = XInternAtom(dpy, "_BR8_ACTIVATE", False);
+    br8_start_menu = XInternAtom(dpy, "_BR8_START_MENU", False);
     net_wm_icon = XInternAtom(dpy, "_NET_WM_ICON", False);
     net_wm_name = XInternAtom(dpy, "_NET_WM_NAME", False);
     utf8_string = XInternAtom(dpy, "UTF8_STRING", False);
@@ -424,9 +467,13 @@ int main(void) {
                 XMoveResizeWindow(dpy, panel, 0, ra.height - PANEL_H, ra.width, PANEL_H);
                 draw_panel();
             } else if (ev.type == ButtonPress && ev.xbutton.window == panel) {
-                TaskBtn *t = task_at(ev.xbutton.x);
-                if (t)
-                    activate_task(t);
+                if (ev.xbutton.x < BRAND_W)
+                    toggle_start_menu();
+                else {
+                    TaskBtn *t = task_at(ev.xbutton.x);
+                    if (t)
+                        activate_task(t);
+                }
             } else if (ev.type == PropertyNotify &&
                        (ev.xproperty.window == root && ev.xproperty.atom == br8_panel_rev)) {
                 last_rev = read_panel_rev();

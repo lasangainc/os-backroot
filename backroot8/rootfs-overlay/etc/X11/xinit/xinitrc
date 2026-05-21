@@ -20,6 +20,11 @@ else
     xsetroot -solid "#1e2030"
 fi
 
+# Start menu daemon (toggle via taskbar emblem)
+if [ -x /usr/local/bin/br8-start-menu ]; then
+    /usr/local/bin/br8-start-menu &
+fi
+
 # Panel (launcher captures crashes for WM error UI)
 /usr/share/backroot8/br8-panel-launcher.sh &
 PANEL_PID=$!
