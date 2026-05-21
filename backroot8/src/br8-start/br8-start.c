@@ -656,42 +656,75 @@ static int home_tile_top(void) {
     return HEADER_H;
 }
 
+typedef struct {
+    int cols;
+    int cell_w;
+    int cell_h;
+    int wide_w;
+    int x0;
+    int y0;
+} TileGrid;
+
+static void grid_metrics(TileGrid *gr) {
+    gr->y0 = home_tile_top();
+    gr->x0 = MARGIN;
+    gr->cell_h = TILE;
+    int usable = win_w - 2 * MARGIN;
+    if (usable < TILE * 2 + TILE_GAP)
+        usable = TILE * 2 + TILE_GAP;
+    gr->cols = (usable + TILE_GAP) / (TILE + TILE_GAP);
+    if (gr->cols < 2)
+        gr->cols = 2;
+    gr->cell_w = (usable - (gr->cols - 1) * TILE_GAP) / gr->cols;
+    if (gr->cell_w < 48)
+        gr->cell_w = TILE;
+    gr->wide_w = gr->cell_w * 2 + TILE_GAP;
+    if (gr->wide_w > usable)
+        gr->wide_w = usable;
+}
+
 static void compute_tile_layout(const int *order, int n_order) {
-    int col1 = MARGIN;
-    int col2 = MARGIN + TILE + TILE_GAP;
-    int y0 = home_tile_top();
-    int y = y0;
+    TileGrid gr;
+    grid_metrics(&gr);
     int col = 0;
+    int y = gr.y0;
 
     for (int s = 0; s < n_order; s++) {
         Tile *t = &home_tiles[order[s]];
         if (t->is_wide) {
-            t->layout_x = col1;
+            if (col > 0) {
+                y += gr.cell_h + TILE_GAP;
+                col = 0;
+            }
+            t->layout_x = gr.x0;
             t->layout_y = y;
-            t->layout_w = TILE * 2 + TILE_GAP;
-            t->layout_h = TILE;
-            y += TILE + TILE_GAP;
+            t->layout_w = gr.wide_w;
+            t->layout_h = gr.cell_h;
+            y += gr.cell_h + TILE_GAP;
             col = 0;
-        } else if (col == 0) {
-            t->layout_x = col1;
-            t->layout_y = y;
-            t->layout_w = TILE;
-            t->layout_h = TILE;
-            col = 1;
         } else {
-            t->layout_x = col2;
+            if (col >= gr.cols) {
+                y += gr.cell_h + TILE_GAP;
+                col = 0;
+            }
+            t->layout_x = gr.x0 + col * (gr.cell_w + TILE_GAP);
             t->layout_y = y;
-            t->layout_w = TILE;
-            t->layout_h = TILE;
-            y += TILE + TILE_GAP;
-            col = 0;
+            t->layout_w = gr.cell_w;
+            t->layout_h = gr.cell_h;
+            col++;
+            if (col >= gr.cols) {
+                y += gr.cell_h + TILE_GAP;
+                col = 0;
+            }
         }
         t->x = t->layout_x;
         t->y = t->layout_y;
         t->w = t->layout_w;
         t->h = t->layout_h;
     }
-    home_h = y + TILE_GAP;
+    if (col > 0)
+        y += gr.cell_h + TILE_GAP;
+    home_h = y;
 }
 
 static void layout_home(void) {
@@ -813,60 +846,95 @@ static void start_layout_animation(void) {
 }
 
 static int slot_at_content_xy_order(const int *order, int n_order, int cx, int cy) {
-    int col1 = MARGIN;
-    int col2 = MARGIN + TILE + TILE_GAP;
-    int y0 = home_tile_top();
-    int y = y0;
+    TileGrid gr;
+    grid_metrics(&gr);
     int col = 0;
+    int y = gr.y0;
     int slot = 0;
+    int last_slot = 0;
 
     for (int s = 0; s < n_order; s++) {
         Tile *t = &home_tiles[order[s]];
         int tx, ty, tw, th;
         if (t->is_wide) {
-            tx = col1;
+            if (col > 0) {
+                y += gr.cell_h + TILE_GAP;
+                col = 0;
+            }
+            tx = gr.x0;
             ty = y;
-            tw = TILE * 2 + TILE_GAP;
-            th = TILE;
-            y += TILE + TILE_GAP;
+            tw = gr.wide_w;
+            th = gr.cell_h;
+            y += gr.cell_h + TILE_GAP;
             col = 0;
-        } else if (col == 0) {
-            tx = col1;
-            ty = y;
-            tw = TILE;
-            th = TILE;
-            col = 1;
         } else {
-            tx = col2;
+            if (col >= gr.cols) {
+                y += gr.cell_h + TILE_GAP;
+                col = 0;
+            }
+            tx = gr.x0 + col * (gr.cell_w + TILE_GAP);
             ty = y;
-            tw = TILE;
-            th = TILE;
-            y += TILE + TILE_GAP;
-            col = 0;
+            tw = gr.cell_w;
+            th = gr.cell_h;
+            col++;
+            if (col >= gr.cols) {
+                y += gr.cell_h + TILE_GAP;
+                col = 0;
+            }
         }
+        last_slot = slot;
         if (cx >= tx && cx < tx + tw && cy >= ty && cy < ty + th)
             return slot;
         slot++;
     }
-    return slot;
+    if (slot > 0)
+        return last_slot;
+    return 0;
+}
+
+static int drag_from_slot(void) {
+    for (int i = 0; i < n_tile_order; i++) {
+        if (tile_order[i] == drag_tile_idx)
+            return i;
+    }
+    return -1;
+}
+
+static int compact_slot_to_order(int compact_slot, int from_slot, int n) {
+    int idx = compact_slot;
+    if (idx >= from_slot)
+        idx++;
+    if (idx < 0)
+        idx = 0;
+    if (idx >= n)
+        idx = n - 1;
+    return idx;
 }
 
 static int slot_at_content_xy(int cx, int cy) {
     if (dragging && drag_tile_idx >= 0) {
+        int from_slot = drag_from_slot();
+        if (from_slot < 0)
+            return 0;
         int compact[MAX_HOME_TILES];
         int n = 0;
         for (int i = 0; i < n_tile_order; i++) {
             if (tile_order[i] != drag_tile_idx)
                 compact[n++] = tile_order[i];
         }
-        int slot = slot_at_content_xy_order(compact, n, cx, cy);
-        if (slot < 0)
-            slot = 0;
-        if (slot > n_tile_order - 1)
-            slot = n_tile_order - 1;
-        return slot;
+        int hit = slot_at_content_xy_order(compact, n, cx, cy);
+        if (hit < 0)
+            hit = 0;
+        if (hit >= n)
+            hit = n > 0 ? n - 1 : 0;
+        return compact_slot_to_order(hit, from_slot, n_tile_order);
     }
-    return slot_at_content_xy_order(tile_order, n_tile_order, cx, cy);
+    int hit = slot_at_content_xy_order(tile_order, n_tile_order, cx, cy);
+    if (hit < 0)
+        return 0;
+    if (hit >= n_tile_order)
+        return n_tile_order - 1;
+    return hit;
 }
 
 static void move_slot(int *order, int n, int from, int to) {
@@ -955,8 +1023,10 @@ static void load_wallpaper(void) {
     unsigned char *data = stbi_load(WALLPAPER, &iw, &ih, &comp, 3);
     if (!data || iw <= 0 || ih <= 0)
         return;
-    int tw = TILE * 2 + TILE_GAP;
-    int th = TILE;
+    TileGrid gr;
+    grid_metrics(&gr);
+    int tw = gr.wide_w > 0 ? gr.wide_w : (TILE * 2 + TILE_GAP);
+    int th = gr.cell_h;
     wallpaper_pm = scale_image_to_pixmap(data, iw, ih, tw, th);
     stbi_image_free(data);
     wallpaper_ready = wallpaper_pm != 0;
@@ -968,9 +1038,16 @@ static void draw_bg(Drawable dst, GC g) {
 }
 
 static void draw_tile_glyph(Drawable dst, GC g, const Tile *t, int sx, int sy, int sw, int sh) {
+    if (sw < 1 || sh < 1)
+        return;
     if (t->act == ACT_DESKTOP && wallpaper_ready) {
-        XCopyArea(dpy, wallpaper_pm, dst, g,
-            0, 0, t->w, t->h, sx, sy);
+        int pw = t->w > 0 ? t->w : sw;
+        int ph = t->h > 0 ? t->h : sh;
+        int cw = sw < pw ? sw : pw;
+        int ch = sh < ph ? sh : ph;
+        XSetForeground(dpy, g, pix_bg);
+        XFillRectangle(dpy, dst, g, sx, sy, sw, sh);
+        XCopyArea(dpy, wallpaper_pm, dst, g, 0, 0, cw, ch, sx, sy);
         return;
     }
     XSetForeground(dpy, g, t->fill_pixel);
@@ -996,16 +1073,48 @@ static void draw_tile_label(Drawable dst, const Tile *t, int sx, int sy, int sh)
     xft_draw(dst, ui_font, sx + 8, sy + sh - 10, t->label, 255, 255, 255);
 }
 
-static int home_region_bottom(void) {
-    int y = home_h - scroll_y + TILE_GAP;
-    if (y > win_h)
-        y = win_h;
-    return y;
+static void tile_screen_rect(const Tile *t, int ti, int dragging_now,
+        int *sx, int *sy, int *sw, int *sh) {
+    int ax, ay, aw, ah;
+    if (dragging_now && ti == drag_tile_idx) {
+        aw = (int)(t->layout_w * DRAG_SCALE);
+        ah = (int)(t->layout_h * DRAG_SCALE);
+        if (aw < 24)
+            aw = 24;
+        if (ah < 24)
+            ah = 24;
+        ax = drag_pointer_x - drag_offset_x - aw / 2;
+        ay = drag_pointer_y - drag_offset_y - ah / 2;
+    } else {
+        ax = t->anim_x;
+        ay = t->anim_y;
+        aw = t->anim_w;
+        ah = t->anim_h;
+        if (aw < 1)
+            aw = t->layout_w > 0 ? t->layout_w : TILE;
+        if (ah < 1)
+            ah = t->layout_h > 0 ? t->layout_h : TILE;
+    }
+    *sx = ax;
+    *sy = ay - scroll_y;
+    *sw = aw;
+    *sh = ah;
 }
 
-static void clear_home_band(Drawable dst, GC g) {
+static void clear_home_region(Drawable dst, GC g) {
     int top = 0;
-    int bot = home_region_bottom();
+    int bot = home_h - scroll_y + TILE_GAP;
+    for (int s = 0; s < n_tile_order; s++) {
+        int ti = tile_order[s];
+        const Tile *t = &home_tiles[ti];
+        int sx, sy, sw, sh;
+        tile_screen_rect(t, ti, dragging, &sx, &sy, &sw, &sh);
+        int b = sy + sh + TILE_GAP;
+        if (b > bot)
+            bot = b;
+    }
+    if (bot > win_h)
+        bot = win_h;
     if (bot > top)
         XFillRectangle(dpy, dst, g, 0, top, win_w, bot - top);
 }
@@ -1015,27 +1124,23 @@ static void draw_home_section(Drawable dst, GC g) {
         xft_draw(dst, header_font, MARGIN, MARGIN + header_font->ascent,
             "Home", 255, 255, 255);
 
-    for (int s = 0; s < n_tile_order; s++) {
-        int ti = tile_order[s];
-        const Tile *t = &home_tiles[ti];
-        int ax, ay, aw, ah;
+    for (int pass = 0; pass < 2; pass++) {
+        for (int s = 0; s < n_tile_order; s++) {
+            int ti = tile_order[s];
+            int is_drag = (dragging && ti == drag_tile_idx);
+            if (pass == 0 && is_drag)
+                continue;
+            if (pass == 1 && !is_drag)
+                continue;
 
-        if (dragging && ti == drag_tile_idx) {
-            aw = (int)(t->layout_w * DRAG_SCALE);
-            ah = (int)(t->layout_h * DRAG_SCALE);
-            ax = drag_pointer_x - drag_offset_x - aw / 2;
-            ay = drag_pointer_y - drag_offset_y - ah / 2 - scroll_y;
-        } else {
-            ax = t->anim_x;
-            ay = t->anim_y;
-            aw = t->anim_w;
-            ah = t->anim_h;
+            const Tile *t = &home_tiles[ti];
+            int sx, sy, sw, sh;
+            tile_screen_rect(t, ti, dragging, &sx, &sy, &sw, &sh);
+            if (sy + sh < 0 || sy > win_h)
+                continue;
+            draw_tile_glyph(dst, g, t, sx, sy, sw, sh);
+            draw_tile_label(dst, t, sx, sy, sh);
         }
-        int sy = ay - scroll_y;
-        if (sy + ah < 0 || sy > win_h)
-            continue;
-        draw_tile_glyph(dst, g, t, ax, sy, aw, ah);
-        draw_tile_label(dst, t, ax, sy, ah);
     }
 }
 
@@ -1131,6 +1236,7 @@ static void draw_all(void) {
         XMoveResizeWindow(dpy, start_win, 0, 0, win_w, win_h);
         invalidate_static();
         free_buffers();
+        load_wallpaper();
     }
 
     ensure_buffers();
@@ -1150,7 +1256,7 @@ static void draw_all(void) {
 
     if (fast) {
         XCopyArea(dpy, static_pm, buf_pm, buf_gc, 0, 0, win_w, win_h, 0, 0);
-        clear_home_band(buf_pm, buf_gc);
+        clear_home_region(buf_pm, buf_gc);
         draw_home_section(buf_pm, buf_gc);
         draw_context_menu(buf_pm, buf_gc);
     } else {
@@ -1390,8 +1496,10 @@ static void start_drag(int tile_idx, int px, int py) {
     Tile *t = &home_tiles[tile_idx];
     int cx = px;
     int cy = py + scroll_y;
-    drag_offset_x = cx - (t->layout_x + t->layout_w / 2);
-    drag_offset_y = cy - (t->layout_y + t->layout_h / 2);
+    int lw = t->layout_w > 0 ? t->layout_w : TILE;
+    int lh = t->layout_h > 0 ? t->layout_h : TILE;
+    drag_offset_x = cx - (t->layout_x + lw / 2);
+    drag_offset_y = cy - (t->layout_y + lh / 2);
     for (int i = 0; i < n_tile_order; i++) {
         if (tile_order[i] == tile_idx) {
             drag_hover_slot = i;
@@ -1424,7 +1532,14 @@ static void end_drag(int px, int py) {
     }
     dragging = 0;
     drag_tile_idx = -1;
-    start_layout_animation();
+    for (int i = 0; i < n_home_tiles; i++) {
+        Tile *t = &home_tiles[i];
+        t->anim_x = t->layout_x;
+        t->anim_y = t->layout_y;
+        t->anim_w = t->layout_w;
+        t->anim_h = t->layout_h;
+    }
+    layout_animating = 0;
     mark_dirty();
 }
 
