@@ -12,10 +12,14 @@
 #include <sys/select.h>
 
 #define WIN_W 520
-#define WIN_H 460
+#define WIN_H 500
 #define MARGIN 36
-#define COMBO_H 38
-#define COMBO_GAP 20
+#define COMBO_H 40
+#define TITLE_SUBTITLE_GAP 16
+#define SUBTITLE_SETTINGS_GAP 32
+#define SETTING_ROW_GAP 28
+#define LABEL_COMBO_GAP 8
+#define SETTINGS_APPLY_GAP 36
 #define POPUP_W 420
 #define POPUP_VISIBLE 10
 #define POPUP_ITEM_H 28
@@ -59,6 +63,19 @@ static XftFont *title_font, *body_font, *label_font;
 static AppState app;
 static int win_x, win_y;
 
+typedef struct {
+    int title_y;
+    int subtitle_y;
+    int kb_label_y;
+    int kb_combo_y;
+    int tz_label_y;
+    int tz_combo_y;
+    int apply_y;
+} Layout;
+
+static Layout layout;
+
+static void compute_layout(void);
 static void draw_all(void);
 
 static unsigned long rgb(int r, int g, int b) {
@@ -313,11 +330,9 @@ static void hide_popup(void) {
 }
 
 static void popup_geom(int *px, int *py) {
-    int combo_y = MARGIN + 120 + COMBO_GAP + COMBO_H;
-    if (app.active_combo == 2)
-        combo_y += COMBO_GAP + COMBO_H;
+    int combo_y = app.active_combo == 1 ? layout.kb_combo_y : layout.tz_combo_y;
     *px = win_x + MARGIN;
-    *py = win_y + combo_y + COMBO_H;
+    *py = win_y + combo_y + COMBO_H + 4;
 }
 
 static void draw_popup(void) {
@@ -373,11 +388,37 @@ static void show_popup(int combo) {
     XMapRaised(dpy, app.popup);
 }
 
+static int font_line_h(XftFont *font, int extra) {
+    if (!font)
+        return 16 + extra;
+    return font->height + extra;
+}
+
+static void compute_layout(void) {
+    int y = MARGIN;
+
+    layout.title_y = y + text_baseline(title_font ? title_font->height : 42, title_font);
+    y += font_line_h(title_font, TITLE_SUBTITLE_GAP);
+
+    layout.subtitle_y = y + text_baseline(body_font ? body_font->ascent : 12, body_font);
+    y += font_line_h(body_font, 6) * 3;
+    y += SUBTITLE_SETTINGS_GAP;
+
+    layout.kb_label_y = y + text_baseline(label_font ? label_font->ascent : 12, label_font);
+    y += font_line_h(label_font, LABEL_COMBO_GAP);
+    layout.kb_combo_y = y;
+    y += COMBO_H + SETTING_ROW_GAP;
+
+    layout.tz_label_y = y + text_baseline(label_font ? label_font->ascent : 12, label_font);
+    y += font_line_h(label_font, LABEL_COMBO_GAP);
+    layout.tz_combo_y = y;
+    y += COMBO_H + SETTINGS_APPLY_GAP;
+
+    layout.apply_y = y;
+}
+
 static int combo_y_for(int combo) {
-    int y = MARGIN + 120;
-    if (combo == 2)
-        y += COMBO_GAP + COMBO_H;
-    return y;
+    return combo == 1 ? layout.kb_combo_y : layout.tz_combo_y;
 }
 
 static void draw_subtitle(Drawable draw, int x, int y, XftFont *font) {
@@ -395,59 +436,69 @@ static void draw_subtitle(Drawable draw, int x, int y, XftFont *font) {
     }
 }
 
-static void draw_combo(int y, const char *label, const StrList *sl, int sel) {
+static void draw_combo(int label_y, int combo_y, const char *label, const StrList *sl, int sel) {
     int x0 = MARGIN;
     int w = WIN_W - MARGIN * 2;
 
-    xft_draw(win, x0, y - 18, label, 255, 255, 255, label_font);
+    xft_draw(win, x0, label_y, label, 255, 255, 255, label_font);
 
     XSetForeground(dpy, gc, rgb(255, 255, 255));
-    XDrawRectangle(dpy, win, gc, x0, y, w, COMBO_H);
+    XDrawRectangle(dpy, win, gc, x0, combo_y, w, COMBO_H);
 
     XSetForeground(dpy, gc, rgb(255, 255, 255));
-    XFillRectangle(dpy, win, gc, x0 + 1, y + 1, w - 2, COMBO_H - 2);
+    XFillRectangle(dpy, win, gc, x0 + 1, combo_y + 1, w - 2, COMBO_H - 2);
     XSetForeground(dpy, gc, rgb(BG_R, BG_G, BG_B));
-    XFillRectangle(dpy, win, gc, x0 + 2, y + 2, w - 4, COMBO_H - 4);
+    XFillRectangle(dpy, win, gc, x0 + 2, combo_y + 2, w - 4, COMBO_H - 4);
 
     if (sel >= 0 && sel < sl->n)
-        xft_draw(win, x0 + 12, y + text_baseline(COMBO_H, body_font),
+        xft_draw(win, x0 + 12, combo_y + text_baseline(COMBO_H, body_font),
             sl->items[sel], 255, 255, 255, body_font);
 
-    xft_draw(win, x0 + w - 24, y + text_baseline(COMBO_H, body_font), "v", 255, 255, 255, body_font);
-}
-
-static int apply_button_y(void) {
-    return combo_y_for(2) + COMBO_GAP + COMBO_H + 28;
+    xft_draw(win, x0 + w - 24, combo_y + text_baseline(COMBO_H, body_font),
+        "v", 255, 255, 255, body_font);
 }
 
 static void draw_apply_button(void) {
-    int y = apply_button_y();
+    int y = layout.apply_y;
     int x = MARGIN;
-    int bg_r = app.apply_hover ? 255 : 255;
-    int bg_g = app.apply_hover ? 255 : 255;
-    int bg_b = app.apply_hover ? 255 : 255;
-    int fg_r = app.apply_hover ? BG_R : 255;
-    int fg_g = app.apply_hover ? BG_G : 255;
-    int fg_b = app.apply_hover ? BG_B : 255;
+    int fg_r, fg_g, fg_b;
+    int bg_r, bg_g, bg_b;
+
+    if (app.apply_hover) {
+        bg_r = 255;
+        bg_g = 255;
+        bg_b = 255;
+        fg_r = BG_R;
+        fg_g = BG_G;
+        fg_b = BG_B;
+    } else {
+        bg_r = BG_R;
+        bg_g = BG_G;
+        bg_b = BG_B;
+        fg_r = 255;
+        fg_g = 255;
+        fg_b = 255;
+    }
 
     XSetForeground(dpy, gc, rgb(255, 255, 255));
     XDrawRectangle(dpy, win, gc, x, y, APPLY_W, APPLY_H);
     XSetForeground(dpy, gc, rgb(bg_r, bg_g, bg_b));
     XFillRectangle(dpy, win, gc, x + 1, y + 1, APPLY_W - 2, APPLY_H - 2);
-    xft_draw(win, x + 28, y + text_baseline(APPLY_H, label_font), "Apply",
+    xft_draw(win, x + 24, y + text_baseline(APPLY_H, label_font), "Apply",
         fg_r, fg_g, fg_b, label_font);
 }
 
 static void draw_all(void) {
+    compute_layout();
+
     XSetForeground(dpy, gc, rgb(BG_R, BG_G, BG_B));
     XFillRectangle(dpy, win, gc, 0, 0, WIN_W, WIN_H);
 
-    xft_draw(win, MARGIN, MARGIN + text_baseline(42, title_font),
-        "Backroot Hello", 255, 255, 255, title_font);
-    draw_subtitle(win, MARGIN, MARGIN + 56, body_font);
+    xft_draw(win, MARGIN, layout.title_y, "Backroot Hello", 255, 255, 255, title_font);
+    draw_subtitle(win, MARGIN, layout.subtitle_y, body_font);
 
-    draw_combo(combo_y_for(1), "Keyboard layout", &app.kb, app.kb_sel);
-    draw_combo(combo_y_for(2), "Timezone", &app.tz, app.tz_sel);
+    draw_combo(layout.kb_label_y, layout.kb_combo_y, "Keyboard layout", &app.kb, app.kb_sel);
+    draw_combo(layout.tz_label_y, layout.tz_combo_y, "Timezone", &app.tz, app.tz_sel);
     draw_apply_button();
 
     if (app.popup_visible)
@@ -462,7 +513,7 @@ static int point_in_combo(int combo, int x, int y) {
 }
 
 static int point_in_apply(int x, int y) {
-    int y0 = apply_button_y();
+    int y0 = layout.apply_y;
     return x >= MARGIN && x < MARGIN + APPLY_W && y >= y0 && y < y0 + APPLY_H;
 }
 
@@ -567,6 +618,7 @@ int main(void) {
     visual = DefaultVisual(dpy, screen);
     cmap = DefaultColormap(dpy, screen);
     open_fonts();
+    compute_layout();
 
     load_keymaps(&app.kb);
     load_timezones(&app.tz);
@@ -626,6 +678,7 @@ int main(void) {
                         draw_popup();
                 }
             } else if (ev.type == MotionNotify && ev.xmotion.window == win) {
+                compute_layout();
                 int hover = point_in_apply((int)ev.xmotion.x, (int)ev.xmotion.y);
                 if (hover != app.apply_hover) {
                     app.apply_hover = hover;
@@ -647,6 +700,7 @@ int main(void) {
                         draw_all();
                     }
                 } else if (ev.xbutton.window == win) {
+                    compute_layout();
                     if (point_in_apply((int)ev.xbutton.x, (int)ev.xbutton.y)) {
                         apply_settings();
                     } else if (point_in_combo(1, (int)ev.xbutton.x, (int)ev.xbutton.y)) {
