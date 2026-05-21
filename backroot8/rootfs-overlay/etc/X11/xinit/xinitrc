@@ -3,19 +3,34 @@
 export DESKTOP_SESSION=backroot8
 export DISPLAY=:0
 xrdb -merge /etc/X11/Xresources 2>/dev/null || true
+
+SPLASH=/usr/share/backroot8/bootscreen.png
 WALLPAPER=/usr/share/backgrounds/backroot8.jpg
+
+# Loading splash on black until panel and wallpaper are up
+xsetroot -solid black
+if command -v feh >/dev/null && [ -r "$SPLASH" ]; then
+    feh --auto-zoom --fullscreen --borderless "$SPLASH" &
+    SPLASH_PID=$!
+fi
+
 if command -v feh >/dev/null && [ -r "$WALLPAPER" ]; then
     feh --bg-fill "$WALLPAPER" &
 else
     xsetroot -solid "#1e2030"
 fi
 
-# Panel first (transparent taskbar, no blur); restart if it exits
-( while true; do /usr/local/bin/br8-panel; sleep 1; done ) &
+# Panel (launcher captures crashes for WM error UI)
+/usr/share/backroot8/br8-panel-launcher.sh &
 PANEL_PID=$!
 
 # Default terminal at root (xterm)
 xterm -fa Monospace -fs 11 -bg "#1a1a22" -fg "#e8e8ec" -title root@Backroot8 -e /bin/bash -l &
+
+if [ -n "${SPLASH_PID:-}" ]; then
+    sleep 1
+    kill "$SPLASH_PID" 2>/dev/null || true
+fi
 
 # Window manager (exec keeps the X session alive)
 # Export X desktop over VNC for noVNC (QEMU std VGA shows the text console)

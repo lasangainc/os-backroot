@@ -1,6 +1,6 @@
 [Unit]
 Description=Backroot 8 Desktop (X11)
-After=network.target
+After=network.target backroot8-splash.service
 
 [Service]
 User=root
@@ -11,6 +11,7 @@ StandardInput=tty
 StandardOutput=journal
 StandardError=journal
 Environment=HOME=/root
+ExecStartPre=-/usr/bin/killall -q fbi
 ExecStart=/usr/bin/startx
 Restart=always
 RestartSec=3

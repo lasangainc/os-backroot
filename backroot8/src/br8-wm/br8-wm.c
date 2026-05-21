@@ -11,12 +11,24 @@
 #include <string.h>
 #include <unistd.h>
 #include <signal.h>
+#include <sys/stat.h>
+#include <sys/select.h>
+#include <ctype.h>
 
 #define TITLE_H 30
 #define MENU_W 240
 #define MENU_ITEM_H 32
 #define MENU_ITEMS 2
 #define MENU_H (MENU_ITEMS * MENU_ITEM_H)
+#define CRASH_BAR_H 52
+#define CRASH_TOGGLE_ZONE_H 24
+#define CRASH_DRAWER_MAX_H 300
+#define CRASH_PAD 12
+#define CRASH_LINE_H 15
+#define CRASH_MAX_LINES 96
+#define CRASH_TEXT_MAX 8192
+#define CRASH_FILE "/tmp/br8-panel.crash"
+#define CRASH_RESTART "/tmp/br8-panel.restart"
 #define BTN_W 30
 #define CLOSE_W 34
 #define MAX_TITLE 256
@@ -55,6 +67,16 @@ static Window menu_win;
 static int menu_visible;
 static int menu_hover = -1;
 static unsigned long panel_rev;
+static Window crash_bar, crash_drawer;
+static int crash_visible;
+static int crash_drawer_open;
+static int crash_drawer_h;
+static int root_w, root_h;
+static time_t crash_mtime;
+static char crash_text[CRASH_TEXT_MAX];
+static char crash_lines[CRASH_MAX_LINES][256];
+static int n_crash_lines;
+static XftFont *mono_font;
 
 static const char *const menu_labels[MENU_ITEMS] = {
     "New terminal at root",
@@ -376,6 +398,221 @@ static void create_menu(void) {
     menu_hover = -1;
 }
 
+static void update_root_geom(void) {
+    XWindowAttributes ra;
+    XGetWindowAttributes(dpy, root, &ra);
+    root_w = ra.width;
+    root_h = ra.height;
+}
+
+static void wrap_crash_lines(void) {
+    int max_chars = (root_w - CRASH_PAD * 2) / 7;
+    if (max_chars < 24)
+        max_chars = 24;
+
+    n_crash_lines = 0;
+    const char *p = crash_text;
+    while (*p && n_crash_lines < CRASH_MAX_LINES) {
+        while (*p == '\n' || *p == '\r')
+            p++;
+        if (!*p)
+            break;
+
+        int len = 0;
+        int last_space = -1;
+        while (p[len] && p[len] != '\n' && p[len] != '\r' && len < max_chars) {
+            if (isspace((unsigned char)p[len]))
+                last_space = len;
+            len++;
+        }
+
+        if (p[len] && p[len] != '\n' && p[len] != '\r' && last_space > 8)
+            len = last_space + 1;
+
+        snprintf(crash_lines[n_crash_lines], sizeof(crash_lines[0]), "%.*s", len, p);
+        n_crash_lines++;
+        p += len;
+        while (*p == ' ')
+            p++;
+    }
+    if (n_crash_lines == 0) {
+        strncpy(crash_lines[0], "(no error output captured)", sizeof(crash_lines[0]) - 1);
+        n_crash_lines = 1;
+    }
+}
+
+static int crash_drawer_height(void) {
+    int h = n_crash_lines * CRASH_LINE_H + CRASH_PAD * 2;
+    if (h > CRASH_DRAWER_MAX_H)
+        h = CRASH_DRAWER_MAX_H;
+    if (h < CRASH_LINE_H + CRASH_PAD * 2)
+        h = CRASH_LINE_H + CRASH_PAD * 2;
+    return h;
+}
+
+static void layout_crash_windows(void) {
+    update_root_geom();
+    wrap_crash_lines();
+    crash_drawer_h = crash_drawer_open ? crash_drawer_height() : 0;
+
+    int bar_y = root_h - CRASH_BAR_H;
+    XMoveResizeWindow(dpy, crash_bar, 0, bar_y, root_w, CRASH_BAR_H);
+
+    if (crash_drawer_open) {
+        int drawer_y = bar_y - crash_drawer_h;
+        XMoveResizeWindow(dpy, crash_drawer, 0, drawer_y, root_w, crash_drawer_h);
+        XMapRaised(dpy, crash_drawer);
+    } else {
+        XUnmapWindow(dpy, crash_drawer);
+    }
+    XMapRaised(dpy, crash_bar);
+}
+
+static void draw_crash_bar(void) {
+    XSetForeground(dpy, gc_title, rgb(120, 28, 28));
+    XFillRectangle(dpy, crash_bar, gc_title, 0, 0, root_w, CRASH_BAR_H);
+    XSetForeground(dpy, gc_title, rgb(180, 40, 40));
+    XFillRectangle(dpy, crash_bar, gc_title, 0, CRASH_BAR_H - CRASH_TOGGLE_ZONE_H,
+        root_w, CRASH_TOGGLE_ZONE_H);
+
+    xft_draw(crash_bar, CRASH_PAD, text_baseline(20),
+        "The taskbar crashed! Click to restart it or see the error below",
+        255, 255, 255);
+
+    const char *hint = crash_drawer_open ? "▼ hide error" : "▶ see the error below";
+    xft_draw(crash_bar, CRASH_PAD, CRASH_BAR_H - 8,
+        hint, 180, 210, 255);
+}
+
+static void draw_crash_drawer(void) {
+    XSetForeground(dpy, gc_title, rgb(24, 24, 30));
+    XFillRectangle(dpy, crash_drawer, gc_title, 0, 0, root_w, crash_drawer_h);
+
+    XftFont *font = mono_font ? mono_font : ui_font;
+    int y = CRASH_PAD + (font ? font->ascent : 12);
+    int max_y = crash_drawer_h - CRASH_PAD;
+    for (int i = 0; i < n_crash_lines && y < max_y; i++) {
+        if (font) {
+            XftDraw *xd = XftDrawCreate(dpy, crash_drawer, visual, xft_cmap);
+            if (xd) {
+                XftColor col;
+                XRenderColor rc = render_rgb(220, 220, 230);
+                if (XftColorAllocValue(dpy, visual, xft_cmap, &rc, &col)) {
+                    XftDrawStringUtf8(xd, &col, font, CRASH_PAD, y,
+                        (FcChar8 *)crash_lines[i], (int)strlen(crash_lines[i]));
+                    XftColorFree(dpy, visual, xft_cmap, &col);
+                }
+                XftDrawDestroy(xd);
+            }
+        }
+        y += CRASH_LINE_H;
+    }
+}
+
+static void hide_crash_ui(void) {
+    if (!crash_visible)
+        return;
+    crash_visible = 0;
+    crash_drawer_open = 0;
+    XUnmapWindow(dpy, crash_drawer);
+    XUnmapWindow(dpy, crash_bar);
+}
+
+static void show_crash_ui(void) {
+    crash_visible = 1;
+    layout_crash_windows();
+    draw_crash_bar();
+    if (crash_drawer_open)
+        draw_crash_drawer();
+}
+
+static int load_crash_file(void) {
+    struct stat st;
+    if (stat(CRASH_FILE, &st) != 0)
+        return 0;
+    if (crash_visible && st.st_mtime == crash_mtime)
+        return 1;
+
+    FILE *f = fopen(CRASH_FILE, "r");
+    if (!f)
+        return 0;
+
+    size_t n = fread(crash_text, 1, sizeof(crash_text) - 1, f);
+    fclose(f);
+    crash_text[n] = '\0';
+    crash_mtime = st.st_mtime;
+    return 1;
+}
+
+static void poll_panel_crash(void) {
+    if (load_crash_file()) {
+        if (!crash_visible)
+            show_crash_ui();
+        else
+            layout_crash_windows();
+    } else if (crash_visible) {
+        hide_crash_ui();
+    }
+}
+
+static void panel_restart_request(void) {
+    FILE *f = fopen(CRASH_RESTART, "w");
+    if (f)
+        fclose(f);
+    crash_drawer_open = 0;
+    hide_crash_ui();
+}
+
+static void toggle_crash_drawer(void) {
+    if (!crash_visible)
+        return;
+    crash_drawer_open = !crash_drawer_open;
+    layout_crash_windows();
+    draw_crash_bar();
+    if (crash_drawer_open)
+        draw_crash_drawer();
+}
+
+static int crash_bar_click(int y) {
+    return y >= CRASH_BAR_H - CRASH_TOGGLE_ZONE_H;
+}
+
+static void create_crash_windows(void) {
+    unsigned long bar_border = rgb(200, 60, 60);
+    unsigned long bar_bg = rgb(120, 28, 28);
+    unsigned long drawer_border = rgb(80, 80, 90);
+    unsigned long drawer_bg = rgb(24, 24, 30);
+
+    crash_bar = XCreateSimpleWindow(dpy, root, 0, 0, 640, CRASH_BAR_H, 1,
+        bar_border, bar_bg);
+    crash_drawer = XCreateSimpleWindow(dpy, root, 0, 0, 640, CRASH_DRAWER_MAX_H, 1,
+        drawer_border, drawer_bg);
+
+    XSetWindowAttributes attr;
+    attr.override_redirect = True;
+    XChangeWindowAttributes(dpy, crash_bar, CWOverrideRedirect, &attr);
+    XChangeWindowAttributes(dpy, crash_drawer, CWOverrideRedirect, &attr);
+
+    XSelectInput(dpy, crash_bar, ExposureMask | ButtonPressMask);
+    XSelectInput(dpy, crash_drawer, ExposureMask | ButtonPressMask);
+    XUnmapWindow(dpy, crash_bar);
+    XUnmapWindow(dpy, crash_drawer);
+    crash_visible = 0;
+    crash_drawer_open = 0;
+}
+
+static void handle_crash_button(XButtonEvent *btn) {
+    if (btn->window == crash_bar) {
+        if (crash_bar_click((int)btn->y))
+            toggle_crash_drawer();
+        else
+            panel_restart_request();
+        return;
+    }
+    if (btn->window == crash_drawer)
+        toggle_crash_drawer();
+}
+
 static void layout_client(Client *c) {
     int tx = c->w - btn_total_width();
     XMoveResizeWindow(dpy, c->title, 0, 0, c->w, TITLE_H);
@@ -650,13 +887,35 @@ int main(void) {
     XSetErrorHandler(NULL);
     signal(SIGCHLD, SIG_IGN);
 
+    mono_font = XftFontOpenName(dpy, screen,
+        "monospace-9:antialias=true:hinting=true");
+    if (mono_font && mono_font->ascent <= 0) {
+        XftFontClose(dpy, mono_font);
+        mono_font = NULL;
+    }
+
+    update_root_geom();
     create_menu();
+    create_crash_windows();
     bump_panel();
+    poll_panel_crash();
 
     Cursor cur = XCreateFontCursor(dpy, XC_left_ptr);
     XDefineCursor(dpy, root, cur);
 
     while (1) {
+        poll_panel_crash();
+
+        if (!XPending(dpy)) {
+            struct timeval tv = { .tv_sec = 0, .tv_usec = 250000 };
+            int xfd = ConnectionNumber(dpy);
+            fd_set fds;
+            FD_ZERO(&fds);
+            FD_SET(xfd, &fds);
+            select(xfd + 1, &fds, NULL, NULL, &tv);
+            poll_panel_crash();
+        }
+
         XEvent ev;
         XNextEvent(dpy, &ev);
 
@@ -676,7 +935,15 @@ int main(void) {
             Client *c = find_by_frame(ev.xunmap.window);
             if (c && ev.xunmap.window == c->frame)
                 c->mapped = 0;
+        } else if (ev.type == ConfigureNotify && ev.xconfigure.window == root) {
+            update_root_geom();
+            if (crash_visible)
+                layout_crash_windows();
         } else if (ev.type == ButtonPress) {
+            if (ev.xbutton.window == crash_bar || ev.xbutton.window == crash_drawer) {
+                handle_crash_button(&ev.xbutton);
+                continue;
+            }
             if (menu_visible && ev.xbutton.window == menu_win) {
                 int item = menu_item_at((int)ev.xbutton.y);
                 hide_menu();
@@ -724,7 +991,11 @@ int main(void) {
                    ev.xcrossing.window == menu_win) {
             menu_set_hover(-1);
         } else if (ev.type == Expose) {
-            if (ev.xexpose.window == menu_win && ev.xexpose.count == 0)
+            if (ev.xexpose.window == crash_bar && ev.xexpose.count == 0)
+                draw_crash_bar();
+            else if (ev.xexpose.window == crash_drawer && ev.xexpose.count == 0)
+                draw_crash_drawer();
+            else if (ev.xexpose.window == menu_win && ev.xexpose.count == 0)
                 draw_menu();
             else {
                 Client *c = find_client(ev.xexpose.window);

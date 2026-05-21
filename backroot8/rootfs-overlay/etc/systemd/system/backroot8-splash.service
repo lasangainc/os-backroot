@@ -1,0 +1,20 @@
+[Unit]
+Description=Backroot 8 boot splash
+DefaultDependencies=no
+After=systemd-vconsole-setup.service
+Before=backroot8-desktop.service
+Conflicts=getty@tty1.service
+
+[Service]
+Type=simple
+Environment=TERM=linux
+ExecStart=/usr/share/backroot8/show-splash.sh
+ExecStop=-/usr/bin/killall -q fbi
+TTYPath=/dev/tty1
+TTYVTDisallocate=no
+StandardInput=tty
+StandardOutput=inherit
+StandardError=inherit
+
+[Install]
+WantedBy=multi-user.target

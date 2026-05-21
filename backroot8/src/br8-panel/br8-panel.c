@@ -12,9 +12,12 @@
 #include <unistd.h>
 #include <sys/select.h>
 
+#include "emblem.h"
+
 #define PANEL_H 32
 #define ALPHA 0.82
-#define BRAND_W 118
+#define EMBLEM_DISPLAY 24
+#define BRAND_W (EMBLEM_DISPLAY + 16)
 #define ICON_SZ 22
 #define ICON_PAD 4
 #define TASK_GAP 6
@@ -43,6 +46,57 @@ static Atom net_wm_icon, net_wm_name, utf8_string;
 static TaskBtn tasks[MAX_TASKS];
 static int ntasks;
 static unsigned long last_rev;
+static Pixmap emblem_pm;
+static int emblem_ready;
+
+static unsigned long rgb_pixel(int r, int g, int b) {
+    XColor c;
+    c.red = (unsigned short)(r << 8);
+    c.green = (unsigned short)(g << 8);
+    c.blue = (unsigned short)(b << 8);
+    c.flags = DoRed | DoGreen | DoBlue;
+    if (!XAllocColor(dpy, xft_cmap, &c))
+        return BlackPixel(dpy, screen);
+    return c.pixel;
+}
+
+static void emblem_init(void) {
+    int disp = EMBLEM_DISPLAY;
+    int depth = DefaultDepth(dpy, screen);
+    emblem_pm = XCreatePixmap(dpy, panel, disp, disp, depth);
+    XImage *xi = XCreateImage(dpy, visual, depth, ZPixmap, 0, NULL, disp, disp, 32, 0);
+    if (!xi)
+        return;
+    xi->data = calloc((size_t)xi->bytes_per_line * disp, 1);
+    if (!xi->data) {
+        XDestroyImage(xi);
+        return;
+    }
+
+    for (int dy = 0; dy < disp; dy++) {
+        for (int dx = 0; dx < disp; dx++) {
+            int sx = dx * EMBLEM_W / disp;
+            int sy = dy * EMBLEM_H / disp;
+            size_t idx = (size_t)(sy * EMBLEM_W + sx) * 3;
+            unsigned long pix = rgb_pixel(emblem_rgb[idx], emblem_rgb[idx + 1], emblem_rgb[idx + 2]);
+            XPutPixel(xi, dx, dy, pix);
+        }
+    }
+
+    GC egc = XCreateGC(dpy, emblem_pm, 0, NULL);
+    XPutImage(dpy, emblem_pm, egc, xi, 0, 0, 0, 0, disp, disp);
+    XFreeGC(dpy, egc);
+    XDestroyImage(xi);
+    emblem_ready = 1;
+}
+
+static void draw_emblem(void) {
+    if (!emblem_ready)
+        return;
+    int x0 = 8;
+    int y0 = (PANEL_H - EMBLEM_DISPLAY) / 2;
+    XCopyArea(dpy, emblem_pm, panel, gc, 0, 0, EMBLEM_DISPLAY, EMBLEM_DISPLAY, x0, y0);
+}
 
 static XRenderColor render_rgb(int r, int g, int b) {
     XRenderColor c;
@@ -234,7 +288,7 @@ static void draw_panel(void) {
     XSetForeground(dpy, gc, bg);
     XFillRectangle(dpy, panel, gc, 0, 0, panel_w, PANEL_H);
 
-    xft_draw(panel, 12, text_baseline(PANEL_H), "Backroot 8", 120, 180, 255);
+    draw_emblem();
 
     collect_tasks();
 
@@ -341,6 +395,7 @@ int main(void) {
     XSelectInput(dpy, root, PropertyChangeMask);
 
     gc = XCreateGC(dpy, panel, 0, NULL);
+    emblem_init();
     XMapRaised(dpy, panel);
     draw_panel();
     last_rev = read_panel_rev();
