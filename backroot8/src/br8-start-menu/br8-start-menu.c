@@ -641,10 +641,13 @@ static gboolean on_key(GtkEventControllerKey *ctrl, guint keyval, guint keycode,
 
 static gboolean ctl_io_cb(GIOChannel *source, GIOCondition cond, gpointer user_data) {
     char buf[8];
+    gsize nread = 0;
+    GIOStatus status;
     AppState *st = user_data;
 
     (void)cond;
-    if (g_io_channel_read_chars(source, buf, sizeof buf - 1, NULL, NULL) > 0)
+    status = g_io_channel_read_chars(source, buf, sizeof buf - 1, &nread, NULL);
+    if (status == G_IO_STATUS_NORMAL && nread > 0)
         show_menu(st);
     return TRUE;
 }
@@ -769,6 +772,9 @@ static void activate(GtkApplication *app, gpointer user_data) {
     GtkWidget *apps_page;
     GtkEventController *key_ctrl;
 
+    if (st->window)
+        return;
+
     st->app = app;
     st->window = gtk_application_window_new(app);
     gtk_window_set_title(GTK_WINDOW(st->window), "");
@@ -816,8 +822,8 @@ static gboolean startup_activate_idle(gpointer data) {
 static void on_startup(GtkApplication *app, gpointer user_data) {
     (void)user_data;
     load_css();
-    if (g_daemon_mode)
-        g_idle_add(startup_activate_idle, app);
+    /* Always build hidden UI + control fifo when launched from xinitrc. */
+    g_idle_add(startup_activate_idle, app);
 }
 
 int main(int argc, char **argv) {

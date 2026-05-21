@@ -11,6 +11,7 @@
 #include <time.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <sys/wait.h>
 #include <sys/select.h>
 
 #include "emblem.h"
@@ -322,6 +323,25 @@ static TaskBtn *task_at(int px) {
     return NULL;
 }
 
+static void toggle_start_menu(void) {
+    int fd;
+    char c = 't';
+
+    fd = open("/tmp/br8-start-menu.ctl", O_WRONLY | O_NONBLOCK);
+    if (fd >= 0) {
+        if (write(fd, &c, 1) == 1) {
+            close(fd);
+            return;
+        }
+        close(fd);
+    }
+
+    if (fork() == 0) {
+        execl("/usr/local/bin/br8-start-menu", "br8-start-menu", "--toggle", NULL);
+        _exit(1);
+    }
+}
+
 static void activate_task(TaskBtn *t) {
     /* Tell WM to restore (property is reliable; ClientMessage often is not). */
     XChangeProperty(dpy, root, br8_activate, XA_WINDOW, 32, PropModeReplace,
@@ -425,14 +445,9 @@ int main(void) {
                 XMoveResizeWindow(dpy, panel, 0, ra.height - PANEL_H, ra.width, PANEL_H);
                 draw_panel();
             } else if (ev.type == ButtonPress && ev.xbutton.window == panel) {
-                if (ev.xbutton.x < BRAND_W) {
-                    int fd = open("/tmp/br8-start-menu.ctl", O_WRONLY | O_NONBLOCK);
-                    if (fd >= 0) {
-                        char c = 't';
-                        (void)write(fd, &c, 1);
-                        close(fd);
-                    }
-                } else {
+                if (ev.xbutton.x < BRAND_W)
+                    toggle_start_menu();
+                else {
                     TaskBtn *t = task_at(ev.xbutton.x);
                     if (t)
                         activate_task(t);
