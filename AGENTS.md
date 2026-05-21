@@ -119,7 +119,7 @@ Check zombies: `ps` STAT `Z` on qemu PID — remove stale `qemu.pid` before rest
 
 ## UI behavior (do not regress)
 
-1. **Title bar:** App name from `_NET_WM_NAME` / `WM_NAME` / `WM_CLASS`, **centered**; buttons on the right.
+1. **Title bar:** App name from `_NET_WM_NAME` / `WM_NAME` / `WM_CLASS`, **centered**; buttons on the right. Click/drag title raises the window.
 2. **Close:** Elongated X inside **red square** border (`draw_close_button`).
 3. **Right-click root:** **New terminal at root** and **Dolphin file explorer**; hovered row is highlighted before click.
 4. **Taskbar:** Slightly transparent (alpha blend), **not blurred**; app badges (class letter / color); click restores minimized windows.

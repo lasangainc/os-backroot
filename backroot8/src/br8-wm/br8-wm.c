@@ -377,6 +377,13 @@ static void tag_frame(Client *c) {
         (unsigned char *)&c->client, 1);
 }
 
+static void raise_client(Client *c) {
+    if (!c)
+        return;
+    XRaiseWindow(dpy, c->frame);
+    XSetInputFocus(dpy, c->client, RevertToParent, CurrentTime);
+}
+
 static void restore_client(Client *c) {
     XWindowAttributes wa;
 
@@ -388,8 +395,7 @@ static void restore_client(Client *c) {
     }
     if (wa.map_state == IsUnmapped || !c->mapped)
         map_client(c);
-    XRaiseWindow(dpy, c->frame);
-    XSetInputFocus(dpy, c->client, RevertToParent, CurrentTime);
+    raise_client(c);
 }
 
 static void add_client(Window w) {
@@ -615,6 +621,7 @@ int main(void) {
             else if (ev.xbutton.window == c->btn_max)
                 maximize_client(c);
             else if (ev.xbutton.window == c->title && ev.xbutton.button == Button1) {
+                raise_client(c);
                 dragging = 1;
                 drag_client = c;
                 drag_x = ev.xbutton.x;
