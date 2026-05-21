@@ -766,27 +766,13 @@ static void on_startup(GtkApplication *app, gpointer user_data) {
         g_idle_add(startup_activate_idle, app);
 }
 
-static gboolean daemon_fork(void) {
-    pid_t pid = fork();
-    if (pid < 0)
-        return FALSE;
-    if (pid > 0)
-        exit(0);
-    if (setsid() < 0)
-        return FALSE;
-    return TRUE;
-}
-
 int main(int argc, char **argv) {
     GtkApplication *app;
-    gboolean daemon_mode = FALSE;
     int i;
 
     for (i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "--daemon") == 0) {
-            daemon_mode = TRUE;
+        if (strcmp(argv[i], "--daemon") == 0)
             g_daemon_mode = TRUE;
-        }
         else if (strcmp(argv[i], "--toggle") == 0) {
             int fd = open(CTL_FIFO, O_WRONLY | O_NONBLOCK);
             if (fd >= 0) {
@@ -799,19 +785,6 @@ int main(int argc, char **argv) {
     }
 
     memset(&g_state, 0, sizeof g_state);
-
-    if (daemon_mode) {
-        if (!daemon_fork())
-            return 1;
-        int nullfd = open("/dev/null", O_RDWR);
-        if (nullfd >= 0) {
-            dup2(nullfd, STDIN_FILENO);
-            dup2(nullfd, STDOUT_FILENO);
-            dup2(nullfd, STDERR_FILENO);
-            if (nullfd > 2)
-                close(nullfd);
-        }
-    }
 
     app = gtk_application_new(APP_ID, G_APPLICATION_NON_UNIQUE);
     g_signal_connect(app, "startup", G_CALLBACK(on_startup), NULL);

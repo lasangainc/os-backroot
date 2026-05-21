@@ -22,7 +22,7 @@ fi
 
 # Start menu daemon (toggle via taskbar emblem)
 if [ -x /usr/local/bin/br8-start-menu ]; then
-    /usr/local/bin/br8-start-menu --daemon &
+    /usr/local/bin/br8-start-menu &
 fi
 
 # Panel (launcher captures crashes for WM error UI)
