@@ -159,6 +159,8 @@ sudo install -Dm644 "$ROOT/rootfs-overlay/usr/share/backroot8/bootscreen.png" \
     "$MNT/usr/share/backroot8/bootscreen.png"
 sudo install -Dm755 "$ROOT/rootfs-overlay/usr/share/backroot8/show-splash.sh" \
     "$MNT/usr/share/backroot8/show-splash.sh"
+sudo install -Dm755 "$ROOT/rootfs-overlay/usr/share/backroot8/br8-panel-launcher.sh" \
+    "$MNT/usr/share/backroot8/br8-panel-launcher.sh"
 sudo install -Dm644 "$ROOT/rootfs-overlay/etc/profile.d/backroot8.sh" "$MNT/etc/profile.d/backroot8.sh"
 sudo install -Dm644 "$ROOT/rootfs-overlay/etc/motd" "$MNT/etc/motd"
 sudo install -Dm644 "$ROOT/rootfs-overlay/etc/systemd/system/backroot8-desktop.service" \
