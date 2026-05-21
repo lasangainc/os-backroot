@@ -6,6 +6,12 @@ xrdb -merge /etc/X11/Xresources 2>/dev/null || true
 
 SPLASH=/usr/share/backroot8/bootscreen.png
 WALLPAPER=/usr/share/backgrounds/backroot8.jpg
+if [ -r /etc/backroot8/wallpaper ]; then
+    _wp=$(head -n1 /etc/backroot8/wallpaper | tr -d '\r')
+    if [ -n "$_wp" ] && [ -r "$_wp" ]; then
+        WALLPAPER=$_wp
+    fi
+fi
 
 # Loading splash on black until panel and wallpaper are up
 xsetroot -solid black

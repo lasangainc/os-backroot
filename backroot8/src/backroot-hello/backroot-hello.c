@@ -12,7 +12,7 @@
 #include <sys/select.h>
 
 #define WIN_W 520
-#define WIN_H 500
+#define WIN_H 580
 #define MARGIN 36
 #define COMBO_H 40
 #define TITLE_SUBTITLE_GAP 16
@@ -34,7 +34,9 @@
 #define POPUP_BG_G 39
 #define POPUP_BG_B 133
 
-#define WALLPAPER "/usr/share/backgrounds/backroot8.jpg"
+#define WALLPAPER_DEFAULT "/usr/share/backgrounds/backroot8.jpg"
+#define WALLPAPER_ALT "/usr/share/backgrounds/backroot8-alt.jpg"
+#define WALLPAPER_CONF "/etc/backroot8/wallpaper"
 
 typedef struct {
     char **items;
@@ -42,11 +44,24 @@ typedef struct {
 } StrList;
 
 typedef struct {
+    const char *label;
+    const char *path;
+} WallpaperOption;
+
+static const WallpaperOption wallpaper_options[] = {
+    { "Backroot (default)", WALLPAPER_DEFAULT },
+    { "Photo wallpaper", WALLPAPER_ALT },
+    { NULL, NULL }
+};
+
+typedef struct {
     StrList kb;
     StrList tz;
+    StrList wp;
     int kb_sel;
     int tz_sel;
-    int active_combo; /* 0 none, 1 kb, 2 tz */
+    int wp_sel;
+    int active_combo; /* 0 none, 1 kb, 2 tz, 3 wp */
     int popup_scroll;
     Window popup;
     int popup_visible;
@@ -70,6 +85,8 @@ typedef struct {
     int kb_combo_y;
     int tz_label_y;
     int tz_combo_y;
+    int wp_label_y;
+    int wp_combo_y;
     int apply_y;
 } Layout;
 
@@ -284,6 +301,61 @@ static int strlist_index(const StrList *sl, const char *value) {
     return 0;
 }
 
+static int wallpaper_option_count(void) {
+    int n = 0;
+    while (wallpaper_options[n].label)
+        n++;
+    return n;
+}
+
+static void load_wallpaper_choices(StrList *sl) {
+    for (int i = 0; wallpaper_options[i].label; i++)
+        strlist_add(sl, wallpaper_options[i].label);
+}
+
+static const char *wallpaper_path_for_index(int idx) {
+    if (idx < 0 || idx >= wallpaper_option_count())
+        return WALLPAPER_DEFAULT;
+    return wallpaper_options[idx].path;
+}
+
+static int wallpaper_index_for_path(const char *path) {
+    if (!path || !path[0])
+        return 0;
+    for (int i = 0; wallpaper_options[i].label; i++) {
+        if (strcmp(wallpaper_options[i].path, path) == 0)
+            return i;
+    }
+    return 0;
+}
+
+static int current_wallpaper_index(void) {
+    FILE *fp = fopen(WALLPAPER_CONF, "r");
+    char line[256];
+
+    if (!fp)
+        return 0;
+    if (!fgets(line, sizeof line, fp)) {
+        fclose(fp);
+        return 0;
+    }
+    fclose(fp);
+    char *nl = strchr(line, '\n');
+    if (nl)
+        *nl = '\0';
+    return wallpaper_index_for_path(line);
+}
+
+static void save_wallpaper_config(const char *path) {
+    FILE *fp = fopen(WALLPAPER_CONF, "w");
+
+    if (!fp)
+        return;
+    fputs(path, fp);
+    fputc('\n', fp);
+    fclose(fp);
+}
+
 static int run_cmd(const char *cmd) {
     return system(cmd);
 }
@@ -325,13 +397,15 @@ static void bump_panel_rev(void) {
 }
 
 static void refresh_desktop(void) {
+    const char *wp = wallpaper_path_for_index(app.wp_sel);
     char cmd[512];
 
     snprintf(cmd, sizeof cmd,
         "command -v feh >/dev/null && feh --bg-fill '%s' 2>/dev/null; "
         "command -v xsetroot >/dev/null && xsetroot -solid '#1e2030'",
-        WALLPAPER);
+        wp);
     run_cmd(cmd);
+    save_wallpaper_config(wp);
     bump_panel_rev();
 }
 
@@ -349,6 +423,8 @@ static StrList *active_list(void) {
         return &app.kb;
     if (app.active_combo == 2)
         return &app.tz;
+    if (app.active_combo == 3)
+        return &app.wp;
     return NULL;
 }
 
@@ -357,6 +433,8 @@ static int active_selected(void) {
         return app.kb_sel;
     if (app.active_combo == 2)
         return app.tz_sel;
+    if (app.active_combo == 3)
+        return app.wp_sel;
     return 0;
 }
 
@@ -365,6 +443,8 @@ static void set_active_selected(int idx) {
         app.kb_sel = idx;
     else if (app.active_combo == 2)
         app.tz_sel = idx;
+    else if (app.active_combo == 3)
+        app.wp_sel = idx;
 }
 
 static void hide_popup(void) {
@@ -376,8 +456,16 @@ static void hide_popup(void) {
     draw_all();
 }
 
+static int combo_y_for_id(int combo) {
+    if (combo == 1)
+        return layout.kb_combo_y;
+    if (combo == 2)
+        return layout.tz_combo_y;
+    return layout.wp_combo_y;
+}
+
 static void popup_geom(int *px, int *py) {
-    int combo_y = app.active_combo == 1 ? layout.kb_combo_y : layout.tz_combo_y;
+    int combo_y = combo_y_for_id(app.active_combo);
     *px = win_x + MARGIN;
     *py = win_y + combo_y + COMBO_H + 4;
 }
@@ -459,13 +547,18 @@ static void compute_layout(void) {
     layout.tz_label_y = y + text_baseline(label_font ? label_font->ascent : 12, label_font);
     y += font_line_h(label_font, LABEL_COMBO_GAP);
     layout.tz_combo_y = y;
+    y += COMBO_H + SETTING_ROW_GAP;
+
+    layout.wp_label_y = y + text_baseline(label_font ? label_font->ascent : 12, label_font);
+    y += font_line_h(label_font, LABEL_COMBO_GAP);
+    layout.wp_combo_y = y;
     y += COMBO_H + SETTINGS_APPLY_GAP;
 
     layout.apply_y = y;
 }
 
 static int combo_y_for(int combo) {
-    return combo == 1 ? layout.kb_combo_y : layout.tz_combo_y;
+    return combo_y_for_id(combo);
 }
 
 static void draw_subtitle(Drawable draw, int x, int y, XftFont *font) {
@@ -546,6 +639,7 @@ static void draw_all(void) {
 
     draw_combo(layout.kb_label_y, layout.kb_combo_y, "Keyboard layout", &app.kb, app.kb_sel);
     draw_combo(layout.tz_label_y, layout.tz_combo_y, "Timezone", &app.tz, app.tz_sel);
+    draw_combo(layout.wp_label_y, layout.wp_combo_y, "Wallpaper", &app.wp, app.wp_sel);
     draw_apply_button();
 
     if (app.popup_visible)
@@ -669,10 +763,12 @@ int main(void) {
 
     load_keyboard_languages(&app.kb);
     load_timezones(&app.tz);
+    load_wallpaper_choices(&app.wp);
     cur_kb = current_keymap();
     cur_tz = current_timezone();
     app.kb_sel = keyboard_index_for_keymap(cur_kb);
     app.tz_sel = strlist_index(&app.tz, cur_tz);
+    app.wp_sel = current_wallpaper_index();
     free(cur_kb);
     free(cur_tz);
 
@@ -754,6 +850,8 @@ int main(void) {
                         show_popup(1);
                     } else if (point_in_combo(2, (int)ev.xbutton.x, (int)ev.xbutton.y)) {
                         show_popup(2);
+                    } else if (point_in_combo(3, (int)ev.xbutton.x, (int)ev.xbutton.y)) {
+                        show_popup(3);
                     } else if (app.popup_visible) {
                         hide_popup();
                     }
@@ -766,5 +864,6 @@ int main(void) {
 
     strlist_free(&app.kb);
     strlist_free(&app.tz);
+    strlist_free(&app.wp);
     return 0;
 }
