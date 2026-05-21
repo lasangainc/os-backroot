@@ -31,6 +31,9 @@
 #define CRASH_RESTART "/tmp/br8-panel.restart"
 #define BTN_W 30
 #define CLOSE_W 34
+#define RESIZE_SZ 14
+#define MIN_FRAME_W 200
+#define MIN_FRAME_H 120
 #define MAX_TITLE 256
 
 typedef struct {
@@ -40,6 +43,7 @@ typedef struct {
     Window btn_min;
     Window btn_max;
     Window btn_close;
+    Window resize_grip;
     char name[MAX_TITLE];
     int x, y, w, h;
     int mapped;
@@ -63,6 +67,10 @@ static int nclients;
 static int dragging;
 static int drag_x, drag_y;
 static Client *drag_client;
+static int resizing;
+static int resize_x, resize_y;
+static int resize_w, resize_h;
+static Client *resize_client;
 static Window menu_win;
 static int menu_visible;
 static int menu_hover = -1;
@@ -131,7 +139,8 @@ static Client *find_client(Window w) {
     for (int i = 0; i < nclients; i++) {
         if (clients[i].frame == w || clients[i].title == w ||
             clients[i].client == w || clients[i].btn_min == w ||
-            clients[i].btn_max == w || clients[i].btn_close == w)
+            clients[i].btn_max == w || clients[i].btn_close == w ||
+            clients[i].resize_grip == w)
             return &clients[i];
     }
     return NULL;
@@ -267,6 +276,20 @@ static void draw_close_button(Client *c) {
     XDrawLine(dpy, c->btn_close, gc_close_x, cx - dx, cy + dy, cx + dx, cy - dy);
 }
 
+static void draw_resize_grip(Client *c) {
+    int w = RESIZE_SZ;
+    int h = RESIZE_SZ;
+
+    XSetForeground(dpy, gc_title, rgb(28, 30, 38));
+    XFillRectangle(dpy, c->resize_grip, gc_title, 0, 0, w, h);
+    XSetForeground(dpy, gc_btn, rgb(170, 175, 190));
+    for (int i = 0; i < 3; i++) {
+        int off = 3 + i * 3;
+        XDrawLine(dpy, c->resize_grip, gc_btn, w - off, h - 2, w - 2, h - off);
+        XDrawLine(dpy, c->resize_grip, gc_btn, w - off - 1, h - 2, w - 2, h - off - 1);
+    }
+}
+
 static void draw_title(Client *c) {
     int title_w = c->w - btn_total_width();
 
@@ -297,6 +320,7 @@ static void draw_chrome(Client *c) {
     draw_min_button(c);
     draw_max_button(c);
     draw_close_button(c);
+    draw_resize_grip(c);
 }
 
 static void spawn_terminal_root(void) {
@@ -615,6 +639,14 @@ static void handle_crash_button(XButtonEvent *btn) {
 
 static void layout_client(Client *c) {
     int tx = c->w - btn_total_width();
+    int grip_x = c->w - RESIZE_SZ;
+    int grip_y = c->h - RESIZE_SZ;
+
+    if (grip_x < 0)
+        grip_x = 0;
+    if (grip_y < TITLE_H)
+        grip_y = TITLE_H;
+
     XMoveResizeWindow(dpy, c->title, 0, 0, c->w, TITLE_H);
     XMoveResizeWindow(dpy, c->client, 0, TITLE_H, c->w, c->h - TITLE_H);
     XMoveResizeWindow(dpy, c->btn_min, tx, 0, BTN_W, TITLE_H);
@@ -622,7 +654,20 @@ static void layout_client(Client *c) {
     XMoveResizeWindow(dpy, c->btn_max, tx, 0, BTN_W, TITLE_H);
     tx += BTN_W;
     XMoveResizeWindow(dpy, c->btn_close, tx, 0, CLOSE_W, TITLE_H);
+    XMoveResizeWindow(dpy, c->resize_grip, grip_x, grip_y, RESIZE_SZ, RESIZE_SZ);
+    XRaiseWindow(dpy, c->resize_grip);
     draw_chrome(c);
+}
+
+static void resize_client_to(Client *c, int w, int h) {
+    if (w < MIN_FRAME_W)
+        w = MIN_FRAME_W;
+    if (h < MIN_FRAME_H)
+        h = MIN_FRAME_H;
+    c->w = w;
+    c->h = h;
+    XMoveResizeWindow(dpy, c->frame, c->x, c->y, c->w, c->h);
+    layout_client(c);
 }
 
 static void map_client(Client *c) {
@@ -726,12 +771,15 @@ static void add_client(Window w) {
     c->btn_min = XCreateSimpleWindow(dpy, c->frame, 0, 0, BTN_W, TITLE_H, 0, 0, 0);
     c->btn_max = XCreateSimpleWindow(dpy, c->frame, 0, 0, BTN_W, TITLE_H, 0, 0, 0);
     c->btn_close = XCreateSimpleWindow(dpy, c->frame, 0, 0, CLOSE_W, TITLE_H, 0, 0, 0);
+    c->resize_grip = XCreateSimpleWindow(dpy, c->frame, 0, 0, RESIZE_SZ, RESIZE_SZ, 0, 0, 0);
 
     XSelectInput(dpy, c->frame, SubstructureRedirectMask | SubstructureNotifyMask);
     XSelectInput(dpy, c->title, ButtonPressMask | ButtonReleaseMask | PointerMotionMask | ExposureMask);
     XSelectInput(dpy, c->btn_min, ButtonPressMask | ExposureMask);
     XSelectInput(dpy, c->btn_max, ButtonPressMask | ExposureMask);
     XSelectInput(dpy, c->btn_close, ButtonPressMask | ExposureMask);
+    XSelectInput(dpy, c->resize_grip,
+        ButtonPressMask | ButtonReleaseMask | PointerMotionMask | ExposureMask);
     XSelectInput(dpy, c->client, PropertyChangeMask);
 
     XReparentWindow(dpy, w, c->frame, 0, TITLE_H);
@@ -742,6 +790,13 @@ static void add_client(Window w) {
     update_net_client_list();
 
     XGrabButton(dpy, Button1, AnyModifier, c->title, False,
+        ButtonPressMask | ButtonReleaseMask | PointerMotionMask,
+        GrabModeAsync, GrabModeAsync, root, None);
+    {
+        Cursor sz_cur = XCreateFontCursor(dpy, XC_bottom_right_corner);
+        XDefineCursor(dpy, c->resize_grip, sz_cur);
+    }
+    XGrabButton(dpy, Button1, AnyModifier, c->resize_grip, False,
         ButtonPressMask | ButtonReleaseMask | PointerMotionMask,
         GrabModeAsync, GrabModeAsync, root, None);
 }
@@ -973,10 +1028,21 @@ int main(void) {
                 drag_client = c;
                 drag_x = ev.xbutton.x;
                 drag_y = ev.xbutton.y;
+            } else if (ev.xbutton.window == c->resize_grip && ev.xbutton.button == Button1 &&
+                       !c->maximized) {
+                raise_client(c);
+                resizing = 1;
+                resize_client = c;
+                resize_x = ev.xbutton.x_root;
+                resize_y = ev.xbutton.y_root;
+                resize_w = c->w;
+                resize_h = c->h;
             }
-        } else if (ev.type == ButtonRelease && dragging) {
+        } else if (ev.type == ButtonRelease && (dragging || resizing)) {
             dragging = 0;
             drag_client = NULL;
+            resizing = 0;
+            resize_client = NULL;
         } else if (ev.type == MotionNotify) {
             if (menu_visible && ev.xmotion.window == menu_win) {
                 menu_set_hover(menu_item_at((int)ev.xmotion.y));
@@ -986,6 +1052,10 @@ int main(void) {
                 drag_client->x = ev.xmotion.x_root - drag_x;
                 drag_client->y = ev.xmotion.y_root - drag_y;
                 XMoveWindow(dpy, drag_client->frame, drag_client->x, drag_client->y);
+            } else if (resizing && resize_client) {
+                int nw = resize_w + (ev.xmotion.x_root - resize_x);
+                int nh = resize_h + (ev.xmotion.y_root - resize_y);
+                resize_client_to(resize_client, nw, nh);
             }
         } else if (ev.type == LeaveNotify && menu_visible &&
                    ev.xcrossing.window == menu_win) {
@@ -1008,6 +1078,8 @@ int main(void) {
                         draw_max_button(c);
                     else if (ev.xexpose.window == c->btn_close)
                         draw_close_button(c);
+                    else if (ev.xexpose.window == c->resize_grip)
+                        draw_resize_grip(c);
                 }
             }
         }
