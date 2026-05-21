@@ -49,6 +49,7 @@ typedef struct {
 } AppState;
 
 static AppState g_state;
+static gboolean g_daemon_mode;
 
 static const PinnedTile pinned_tiles[] = {
     { "Desktop", NULL, NULL, NULL, 1 },
@@ -753,10 +754,16 @@ static void activate(GtkApplication *app, gpointer user_data) {
     setup_ctl_fifo(st);
 }
 
+static gboolean startup_activate_idle(gpointer data) {
+    g_application_activate(G_APPLICATION(data));
+    return G_SOURCE_REMOVE;
+}
+
 static void on_startup(GtkApplication *app, gpointer user_data) {
-    (void)app;
-    load_css();
     (void)user_data;
+    load_css();
+    if (g_daemon_mode)
+        g_idle_add(startup_activate_idle, app);
 }
 
 static gboolean daemon_fork(void) {
@@ -776,8 +783,10 @@ int main(int argc, char **argv) {
     int i;
 
     for (i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "--daemon") == 0)
+        if (strcmp(argv[i], "--daemon") == 0) {
             daemon_mode = TRUE;
+            g_daemon_mode = TRUE;
+        }
         else if (strcmp(argv[i], "--toggle") == 0) {
             int fd = open(CTL_FIFO, O_WRONLY | O_NONBLOCK);
             if (fd >= 0) {
