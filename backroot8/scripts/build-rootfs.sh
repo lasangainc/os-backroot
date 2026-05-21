@@ -174,6 +174,7 @@ sudo install -Dm644 "$ROOT/rootfs-overlay/etc/profile.d/backroot8.sh" "$MNT/etc/
 sudo install -Dm644 "$ROOT/rootfs-overlay/etc/profile.d/backroot8-neofetch.sh" \
     "$MNT/etc/profile.d/backroot8-neofetch.sh"
 sudo install -Dm644 "$ROOT/rootfs-overlay/etc/os-release" "$MNT/etc/os-release"
+sudo install -Dm644 "$ROOT/rootfs-overlay/etc/os-release" "$MNT/usr/lib/os-release"
 sudo install -Dm644 "$ROOT/assets/neoemblem.txt" "$MNT/usr/share/backroot8/neoemblem.txt"
 sudo install -Dm644 "$ROOT/rootfs-overlay/etc/neofetch/config.conf" "$MNT/etc/neofetch/config.conf"
 sudo mkdir -p "$MNT/root/.config/neofetch"
