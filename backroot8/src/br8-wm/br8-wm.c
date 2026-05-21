@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <unistd.h>
 #include <signal.h>
 #include <sys/stat.h>
@@ -16,6 +17,7 @@
 #include <ctype.h>
 
 #define TITLE_H 30
+#define PANEL_H 32
 #define MENU_W 240
 #define MENU_ITEM_H 32
 #define MENU_ITEMS 2
@@ -58,6 +60,7 @@ static GC gc_title, gc_btn, gc_close_fill, gc_close_x;
 static Atom wm_protocols, wm_delete;
 static Atom net_wm_name, net_client_list, utf8_string;
 static Atom br8_frame, br8_client, br8_panel_rev, br8_activate;
+static Atom net_wm_window_type, net_wm_window_type_desktop;
 static Client clients[256];
 static int nclients;
 static int dragging;
@@ -405,6 +408,87 @@ static void update_root_geom(void) {
     root_h = ra.height;
 }
 
+static void clamp_client_geometry(Client *c) {
+    int max_h = root_h - PANEL_H;
+    int min_w = 200;
+    int min_h = TITLE_H + 80;
+
+    if (max_h < min_h)
+        max_h = min_h;
+
+    if (c->w > root_w)
+        c->w = root_w;
+    if (c->w < min_w)
+        c->w = min_w;
+    if (c->h > max_h)
+        c->h = max_h;
+    if (c->h < min_h)
+        c->h = min_h;
+
+    if (c->x < 0)
+        c->x = 0;
+    if (c->y < 0)
+        c->y = 0;
+    if (c->x + c->w > root_w)
+        c->x = root_w - c->w;
+    if (c->y + c->h > max_h)
+        c->y = max_h - c->h;
+    if (c->x < 0)
+        c->x = 0;
+    if (c->y < 0)
+        c->y = 0;
+}
+
+static void read_client_hints(Window w, int *x, int *y, int *width, int *height) {
+    XSizeHints hints;
+    long supplied = 0;
+
+    memset(&hints, 0, sizeof(hints));
+    if (!XGetWMNormalHints(dpy, w, &hints, &supplied))
+        return;
+
+    if (supplied & USPosition) {
+        *x = hints.x;
+        *y = hints.y;
+    }
+    if ((supplied & USSize) ||
+        ((supplied & PSize) && (hints.flags & PSize))) {
+        if (hints.width > 0)
+            *width = hints.width;
+        if (hints.height > 0)
+            *height = hints.height;
+    }
+}
+
+static int is_background_window(Window w) {
+    Atom actual;
+    int fmt;
+    unsigned long n, bytes;
+    unsigned char *data = NULL;
+
+    if (XGetWindowProperty(dpy, w, net_wm_window_type, 0, 8, False, XA_ATOM,
+            &actual, &fmt, &n, &bytes, &data) == Success && data && n >= 1) {
+        Atom type = *(Atom *)data;
+        XFree(data);
+        if (type == net_wm_window_type_desktop)
+            return 1;
+    } else if (data) {
+        XFree(data);
+    }
+
+    XClassHint hint;
+    if (XGetClassHint(dpy, w, &hint)) {
+        int skip = hint.res_class && strcasecmp(hint.res_class, "feh") == 0;
+        if (hint.res_name)
+            XFree(hint.res_name);
+        if (hint.res_class)
+            XFree(hint.res_class);
+        if (skip)
+            return 1;
+    }
+    return 0;
+}
+
 static void wrap_crash_lines(void) {
     int max_chars = (root_w - CRASH_PAD * 2) / 7;
     if (max_chars < 24)
@@ -652,9 +736,13 @@ static void close_client(Client *c) {
 static void maximize_client(Client *c) {
     if (c->maximized) {
         c->maximized = 0;
+        c->x = c->saved_x;
+        c->y = c->saved_y;
         c->w = c->saved_w;
         c->h = c->saved_h;
-        XMoveResizeWindow(dpy, c->frame, c->saved_x, c->saved_y, c->w, c->h);
+        update_root_geom();
+        clamp_client_geometry(c);
+        XMoveResizeWindow(dpy, c->frame, c->x, c->y, c->w, c->h);
     } else {
         XWindowAttributes ra;
         XGetWindowAttributes(dpy, root, &ra);
@@ -666,7 +754,7 @@ static void maximize_client(Client *c) {
         c->x = 0;
         c->y = 0;
         c->w = ra.width;
-        c->h = ra.height - 32;
+        c->h = ra.height - PANEL_H;
         XMoveResizeWindow(dpy, c->frame, c->x, c->y, c->w, c->h);
     }
     layout_client(c);
@@ -712,13 +800,20 @@ static void add_client(Window w) {
         return;
     if (wa.override_redirect)
         return;
+    if (is_background_window(w))
+        return;
     Client *c = &clients[nclients++];
     memset(c, 0, sizeof(*c));
     c->client = w;
-    c->w = wa.width < 400 ? 640 : wa.width;
-    c->h = (wa.height < 300 ? 400 : wa.height) + TITLE_H;
+    int client_w = wa.width < 400 ? 640 : wa.width;
+    int client_h = wa.height < 300 ? 400 : wa.height;
     c->x = 80 + nclients * 24;
     c->y = 60 + nclients * 24;
+    read_client_hints(w, &c->x, &c->y, &client_w, &client_h);
+    c->w = client_w;
+    c->h = client_h + TITLE_H;
+    update_root_geom();
+    clamp_client_geometry(c);
 
     c->frame = XCreateSimpleWindow(dpy, root, c->x, c->y, c->w, c->h, 2,
         rgb(70, 75, 90), rgb(28, 30, 38));
@@ -813,6 +908,30 @@ static void handle_map_request(XMapRequestEvent *e) {
     add_client(w);
 }
 
+static void adopt_existing_clients(void) {
+    Window root_ret, parent;
+    Window *children = NULL;
+    unsigned int nch = 0;
+
+    if (!XQueryTree(dpy, root, &root_ret, &parent, &children, &nch))
+        return;
+
+    for (unsigned int i = 0; i < nch; i++) {
+        Window w = children[i];
+        XWindowAttributes wa;
+
+        if (is_our_chrome(w) || find_by_client(w))
+            continue;
+        if (!XGetWindowAttributes(dpy, w, &wa))
+            continue;
+        if (wa.override_redirect || wa.map_state != IsViewable)
+            continue;
+        add_client(w);
+    }
+    if (children)
+        XFree(children);
+}
+
 static void handle_client_message(XClientMessageEvent *e) {
     if (e->message_type != br8_activate)
         return;
@@ -880,6 +999,8 @@ int main(void) {
     br8_client = XInternAtom(dpy, "_BR8_CLIENT", False);
     br8_panel_rev = XInternAtom(dpy, "_BR8_PANEL_REV", False);
     br8_activate = XInternAtom(dpy, "_BR8_ACTIVATE", False);
+    net_wm_window_type = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE", False);
+    net_wm_window_type_desktop = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE_DESKTOP", False);
 
     XSelectInput(dpy, root,
         SubstructureRedirectMask | SubstructureNotifyMask | ButtonPressMask |
@@ -895,6 +1016,7 @@ int main(void) {
     }
 
     update_root_geom();
+    adopt_existing_clients();
     create_menu();
     create_crash_windows();
     bump_panel();
@@ -985,6 +1107,7 @@ int main(void) {
             if (dragging && drag_client) {
                 drag_client->x = ev.xmotion.x_root - drag_x;
                 drag_client->y = ev.xmotion.y_root - drag_y;
+                clamp_client_geometry(drag_client);
                 XMoveWindow(dpy, drag_client->frame, drag_client->x, drag_client->y);
             }
         } else if (ev.type == LeaveNotify && menu_visible &&
