@@ -5,23 +5,35 @@
 #include <X11/Xatom.h>
 #include <X11/Xutil.h>
 #include <X11/Xft/Xft.h>
+#include <dirent.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <time.h>
 #include <unistd.h>
 #include <sys/select.h>
+#include <sys/stat.h>
 
 #include "emblem.h"
 
-#define PANEL_H 32
+#define STB_IMAGE_IMPLEMENTATION
+#include "../br8-start/stb_image.h"
+
+#define PANEL_H 40
 #define ALPHA 0.82
-#define EMBLEM_DISPLAY 24
+#define EMBLEM_DISPLAY 28
 #define BRAND_W (EMBLEM_DISPLAY + 16)
-#define ICON_SZ 22
+#define ICON_SZ 28
 #define ICON_PAD 4
 #define TASK_GAP 6
 #define MAX_TASKS 48
+#define MAX_DESKTOP_ICONS 256
+
+typedef struct {
+    char wm_class[128];
+    char icon_name[128];
+} DesktopIcon;
 
 typedef struct {
     Window frame;
@@ -49,6 +61,8 @@ static unsigned long last_rev;
 static int start_menu_open;
 static Pixmap emblem_pm;
 static int emblem_ready;
+static DesktopIcon desktop_icons[MAX_DESKTOP_ICONS];
+static int ndesktop_icons;
 
 static unsigned long rgb_pixel(int r, int g, int b) {
     XColor c;
@@ -160,10 +174,309 @@ static void free_tasks(void) {
     ntasks = 0;
 }
 
-static Pixmap icon_from_net_wm(Window client) {
-    /* Skip _NET_WM_ICON XPutImage path (depth mismatch on std VGA); use fallback badge */
-    (void)client;
+static void trim(char *s) {
+    if (!s)
+        return;
+    size_t n = strlen(s);
+    while (n > 0 && (s[n - 1] == '\n' || s[n - 1] == '\r' || s[n - 1] == ' ' || s[n - 1] == '\t'))
+        s[--n] = '\0';
+    char *p = s;
+    while (*p == ' ' || *p == '\t')
+        p++;
+    if (p != s)
+        memmove(s, p, strlen(p) + 1);
+}
+
+static int parse_desktop_icon(const char *path) {
+    FILE *f = fopen(path, "r");
+    if (!f)
+        return 0;
+    char line[512];
+    char icon[128] = "";
+    char startup[128] = "";
+    int hidden = 0;
+    int nodisplay = 0;
+    while (fgets(line, sizeof(line), f)) {
+        if (strncmp(line, "Icon=", 5) == 0) {
+            snprintf(icon, sizeof(icon), "%.*s", (int)(sizeof(icon) - 1), line + 5);
+            trim(icon);
+        } else if (strncmp(line, "StartupWMClass=", 17) == 0) {
+            snprintf(startup, sizeof(startup), "%.*s", (int)(sizeof(startup) - 1), line + 17);
+            trim(startup);
+        } else if (strncmp(line, "Hidden=", 7) == 0) {
+            hidden = (line[7] == 't' || line[7] == 'T' || line[7] == '1');
+        } else if (strncmp(line, "NoDisplay=", 10) == 0) {
+            nodisplay = (line[10] == 't' || line[10] == 'T' || line[10] == '1');
+        }
+    }
+    fclose(f);
+    if (hidden || nodisplay || !icon[0] || !startup[0] || ndesktop_icons >= MAX_DESKTOP_ICONS)
+        return 0;
+    DesktopIcon *d = &desktop_icons[ndesktop_icons++];
+    snprintf(d->wm_class, sizeof(d->wm_class), "%s", startup);
+    snprintf(d->icon_name, sizeof(d->icon_name), "%s", icon);
+    return 1;
+}
+
+static void scan_desktop_icons(const char *dir) {
+    DIR *d = opendir(dir);
+    if (!d)
+        return;
+    struct dirent *ent;
+    char path[512];
+    while ((ent = readdir(d)) != NULL) {
+        if (ent->d_name[0] == '.')
+            continue;
+        size_t len = strlen(ent->d_name);
+        if (len < 8 || strcmp(ent->d_name + len - 8, ".desktop") != 0)
+            continue;
+        snprintf(path, sizeof(path), "%s/%s", dir, ent->d_name);
+        parse_desktop_icon(path);
+    }
+    closedir(d);
+}
+
+static void load_desktop_icon_map(void) {
+    ndesktop_icons = 0;
+    scan_desktop_icons("/usr/share/applications");
+    scan_desktop_icons("/usr/local/share/applications");
+}
+
+static const char *icon_name_for_class(const char *res_class, const char *res_name) {
+    for (int i = 0; i < ndesktop_icons; i++) {
+        if (res_class && res_class[0] &&
+                strcasecmp(desktop_icons[i].wm_class, res_class) == 0)
+            return desktop_icons[i].icon_name;
+        if (res_name && res_name[0] &&
+                strcasecmp(desktop_icons[i].wm_class, res_name) == 0)
+            return desktop_icons[i].icon_name;
+    }
+    return NULL;
+}
+
+static int file_exists(const char *path) {
+    struct stat st;
+    return stat(path, &st) == 0 && S_ISREG(st.st_mode);
+}
+
+static int try_icon_path(const char *fmt, const char *name, char *out, size_t n) {
+    snprintf(out, n, fmt, name);
+    return file_exists(out);
+}
+
+static int resolve_icon_file(const char *icon_name, char *out, size_t n) {
+    if (!icon_name || !icon_name[0])
+        return 0;
+    if (icon_name[0] == '/') {
+        if (file_exists(icon_name)) {
+            snprintf(out, n, "%s", icon_name);
+            return 1;
+        }
+        return 0;
+    }
+    static const char *const paths[] = {
+        "/usr/share/pixmaps/%s.png",
+        "/usr/share/icons/hicolor/48x48/apps/%s.png",
+        "/usr/share/icons/hicolor/32x32/apps/%s.png",
+        "/usr/share/icons/hicolor/256x256/apps/%s.png",
+        "/usr/share/icons/Adwaita/48x48/apps/%s.png",
+        "/usr/share/icons/breeze/apps/48x48/%s.png",
+        "/usr/share/icons/breeze/apps/32x32/%s.png",
+        NULL
+    };
+    for (int i = 0; paths[i]; i++) {
+        if (try_icon_path(paths[i], icon_name, out, n))
+            return 1;
+    }
     return 0;
+}
+
+static Pixmap pixmap_from_rgba_scaled(const unsigned char *src, int sw, int sh,
+        int dw, int dh) {
+    int depth = DefaultDepth(dpy, screen);
+    Pixmap pm = XCreatePixmap(dpy, panel, dw, dh, depth);
+    XImage *xi = XCreateImage(dpy, visual, depth, ZPixmap, 0, NULL, dw, dh, 32, 0);
+    if (!xi) {
+        XFreePixmap(dpy, pm);
+        return 0;
+    }
+    xi->data = calloc((size_t)xi->bytes_per_line * (size_t)dh, 1);
+    if (!xi->data) {
+        XDestroyImage(xi);
+        XFreePixmap(dpy, pm);
+        return 0;
+    }
+
+    for (int dy = 0; dy < dh; dy++) {
+        int sy = sh > 1 ? dy * sh / dh : 0;
+        if (sy >= sh)
+            sy = sh - 1;
+        for (int dx = 0; dx < dw; dx++) {
+            int sx = sw > 1 ? dx * sw / dw : 0;
+            if (sx >= sw)
+                sx = sw - 1;
+            size_t idx = (size_t)(sy * sw + sx) * 4;
+            int a = src[idx + 3];
+            int r = src[idx];
+            int g = src[idx + 1];
+            int b = src[idx + 2];
+            if (a < 255) {
+                int bg = 45;
+                r = (r * a + bg * (255 - a)) / 255;
+                g = (g * a + bg * (255 - a)) / 255;
+                b = (b * a + bg * (255 - a)) / 255;
+            }
+            XPutPixel(xi, dx, dy, rgb_pixel(r, g, b));
+        }
+    }
+
+    GC pg = XCreateGC(dpy, pm, 0, NULL);
+    XPutImage(dpy, pm, pg, xi, 0, 0, 0, 0, dw, dh);
+    XFreeGC(dpy, pg);
+    XDestroyImage(xi);
+    return pm;
+}
+
+static Pixmap pixmap_from_argb_scaled(const unsigned long *src, int sw, int sh,
+        int dw, int dh) {
+    int depth = DefaultDepth(dpy, screen);
+    Pixmap pm = XCreatePixmap(dpy, panel, dw, dh, depth);
+    XImage *xi = XCreateImage(dpy, visual, depth, ZPixmap, 0, NULL, dw, dh, 32, 0);
+    if (!xi) {
+        XFreePixmap(dpy, pm);
+        return 0;
+    }
+    xi->data = calloc((size_t)xi->bytes_per_line * (size_t)dh, 1);
+    if (!xi->data) {
+        XDestroyImage(xi);
+        XFreePixmap(dpy, pm);
+        return 0;
+    }
+
+    for (int dy = 0; dy < dh; dy++) {
+        int sy = sh > 1 ? dy * sh / dh : 0;
+        if (sy >= sh)
+            sy = sh - 1;
+        for (int dx = 0; dx < dw; dx++) {
+            int sx = sw > 1 ? dx * sw / dw : 0;
+            if (sx >= sw)
+                sx = sw - 1;
+            unsigned long argb = src[(size_t)sy * (size_t)sw + (size_t)sx];
+            int a = (int)((argb >> 24) & 0xff);
+            int r = (int)((argb >> 16) & 0xff);
+            int g = (int)((argb >> 8) & 0xff);
+            int b = (int)(argb & 0xff);
+            if (a < 255) {
+                int bg = 45;
+                r = (r * a + bg * (255 - a)) / 255;
+                g = (g * a + bg * (255 - a)) / 255;
+                b = (b * a + bg * (255 - a)) / 255;
+            }
+            XPutPixel(xi, dx, dy, rgb_pixel(r, g, b));
+        }
+    }
+
+    GC pg = XCreateGC(dpy, pm, 0, NULL);
+    XPutImage(dpy, pm, pg, xi, 0, 0, 0, 0, dw, dh);
+    XFreeGC(dpy, pg);
+    XDestroyImage(xi);
+    return pm;
+}
+
+static Pixmap icon_from_png_file(const char *path) {
+    int iw = 0, ih = 0, comp = 0;
+    unsigned char *data = stbi_load(path, &iw, &ih, &comp, 4);
+    if (!data || iw <= 0 || ih <= 0)
+        return 0;
+    Pixmap pm = pixmap_from_rgba_scaled(data, iw, ih, ICON_SZ, ICON_SZ);
+    stbi_image_free(data);
+    return pm;
+}
+
+static Pixmap icon_from_desktop(Window client) {
+    char res_class[128] = "";
+    char res_name[128] = "";
+    XClassHint hint;
+    if (XGetClassHint(dpy, client, &hint)) {
+        if (hint.res_class)
+            strncpy(res_class, hint.res_class, sizeof(res_class) - 1);
+        if (hint.res_name)
+            strncpy(res_name, hint.res_name, sizeof(res_name) - 1);
+        if (hint.res_name)
+            XFree(hint.res_name);
+        if (hint.res_class)
+            XFree(hint.res_class);
+    }
+
+    const char *icon_name = icon_name_for_class(res_class, res_name);
+    char path[512];
+    if (icon_name && resolve_icon_file(icon_name, path, sizeof(path)))
+        return icon_from_png_file(path);
+    if (res_class[0] && resolve_icon_file(res_class, path, sizeof(path)))
+        return icon_from_png_file(path);
+    if (res_name[0] && resolve_icon_file(res_name, path, sizeof(path)))
+        return icon_from_png_file(path);
+    return 0;
+}
+
+static Pixmap icon_from_net_wm(Window client) {
+    unsigned long *prop = NULL;
+    Atom actual;
+    int fmt;
+    unsigned long nitems = 0, bytes = 0;
+
+    if (XGetWindowProperty(dpy, client, net_wm_icon, 0, 1024 * 1024, False,
+            XA_CARDINAL, &actual, &fmt, &nitems, &bytes,
+            (unsigned char **)&prop) != Success || !prop || fmt != 32 || nitems < 2) {
+        if (prop)
+            XFree(prop);
+        return 0;
+    }
+
+    int pick_w = 0, pick_h = 0;
+    unsigned long pick_off = 0;
+    int largest_w = 0, largest_h = 0;
+    unsigned long largest_off = 0;
+
+    for (unsigned long off = 0; off < nitems; ) {
+        if (off + 1 >= nitems)
+            break;
+        int w = (int)prop[off];
+        int h = (int)prop[off + 1];
+        if (w <= 0 || h <= 0)
+            break;
+        unsigned long psz = (unsigned long)w * (unsigned long)h;
+        if (off + 2 + psz > nitems)
+            break;
+        if (w >= ICON_SZ && h >= ICON_SZ) {
+            if (!pick_w || w < pick_w || (w == pick_w && h < pick_h)) {
+                pick_w = w;
+                pick_h = h;
+                pick_off = off;
+            }
+        }
+        if (w * h > largest_w * largest_h) {
+            largest_w = w;
+            largest_h = h;
+            largest_off = off;
+        }
+        off += 2 + psz;
+    }
+
+    if (!pick_w && largest_w > 0) {
+        pick_w = largest_w;
+        pick_h = largest_h;
+        pick_off = largest_off;
+    }
+    if (!pick_w) {
+        XFree(prop);
+        return 0;
+    }
+
+    const unsigned long *pixels = prop + pick_off + 2;
+    Pixmap pm = pixmap_from_argb_scaled(pixels, pick_w, pick_h, ICON_SZ, ICON_SZ);
+    XFree(prop);
+    return pm;
 }
 
 static Pixmap icon_fallback(Window client) {
@@ -271,6 +584,8 @@ static void collect_tasks(void) {
 
         get_client_label(client, t->label, sizeof(t->label));
         t->icon = icon_from_net_wm(client);
+        if (!t->icon)
+            t->icon = icon_from_desktop(client);
         if (!t->icon)
             t->icon = icon_fallback(client);
         t->icon_w = ICON_SZ;
@@ -443,6 +758,7 @@ int main(void) {
     XSelectInput(dpy, root, PropertyChangeMask);
 
     gc = XCreateGC(dpy, panel, 0, NULL);
+    load_desktop_icon_map();
     emblem_init();
     XMapRaised(dpy, panel);
     draw_panel();
