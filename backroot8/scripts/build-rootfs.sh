@@ -24,6 +24,10 @@ cleanup_mounts() {
 
 trap cleanup_mounts EXIT
 
+log "Preparing branding assets..."
+"$ROOT/scripts/prepare-bootscreen.sh"
+make -C "$ROOT/src/br8-panel" emblem.h
+
 log "Building binaries..."
 make -C "$ROOT/src/br8-wm" clean br8-wm
 make -C "$ROOT/src/br8-panel" clean br8-panel
@@ -87,7 +91,7 @@ pacman -S --noconfirm --needed \
     linux linux-firmware \
     base base-devel \
     xorg-server xorg-xinit xorg-xrandr xf86-video-vesa \
-    xterm dolphin feh nettle xorg-fonts-misc libxft ttf-dejavu \
+    xterm dolphin feh fbida nettle xorg-fonts-misc libxft ttf-dejavu \
     systemd-sysvcompat \
     sudo networkmanager \
     mkinitcpio grub efibootmgr \
@@ -151,11 +155,17 @@ sudo install -Dm755 "$ROOT/src/br8-panel/br8-panel" "$MNT/usr/local/bin/br8-pane
 sudo install -Dm755 "$ROOT/rootfs-overlay/etc/X11/xinit/xinitrc" "$MNT/etc/X11/xinit/xinitrc"
 sudo install -Dm644 "$ROOT/rootfs-overlay/usr/share/backgrounds/backroot8.jpg" \
     "$MNT/usr/share/backgrounds/backroot8.jpg"
+sudo install -Dm644 "$ROOT/rootfs-overlay/usr/share/backroot8/bootscreen.png" \
+    "$MNT/usr/share/backroot8/bootscreen.png"
+sudo install -Dm755 "$ROOT/rootfs-overlay/usr/share/backroot8/show-splash.sh" \
+    "$MNT/usr/share/backroot8/show-splash.sh"
 sudo install -Dm644 "$ROOT/rootfs-overlay/etc/profile.d/backroot8.sh" "$MNT/etc/profile.d/backroot8.sh"
 sudo install -Dm644 "$ROOT/rootfs-overlay/etc/motd" "$MNT/etc/motd"
 sudo install -Dm644 "$ROOT/rootfs-overlay/etc/systemd/system/backroot8-desktop.service" \
     "$MNT/etc/systemd/system/backroot8-desktop.service"
-sudo arch-chroot "$MNT" systemctl enable backroot8-desktop.service sshd 2>/dev/null || true
+sudo install -Dm644 "$ROOT/rootfs-overlay/etc/systemd/system/backroot8-splash.service" \
+    "$MNT/etc/systemd/system/backroot8-splash.service"
+sudo arch-chroot "$MNT" systemctl enable backroot8-splash.service backroot8-desktop.service sshd 2>/dev/null || true
 
 sudo mkdir -p "$MNT/root"
 cat <<'EOF' | sudo tee "$MNT/root/.xinitrc" >/dev/null
