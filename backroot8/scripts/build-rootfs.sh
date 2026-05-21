@@ -7,7 +7,7 @@ VM_DIR="$ROOT/vm"
 DISK="$VM_DIR/backroot8.img"
 BOOTSTRAP="$VM_DIR/archlinux-bootstrap.tar.zst"
 MNT="$VM_DIR/mnt"
-SIZE_MB="${DISK_SIZE_MB:-4096}"
+SIZE_MB="${DISK_SIZE_MB:-6144}"
 
 log() { echo "[backroot8] $*"; }
 
@@ -87,7 +87,7 @@ pacman -S --noconfirm --needed \
     linux linux-firmware \
     base base-devel \
     xorg-server xorg-xinit xorg-xrandr xf86-video-vesa \
-    xfce4-terminal xterm dolphin feh nettle xorg-fonts-misc libxft ttf-dejavu \
+    xterm dolphin feh nettle xorg-fonts-misc libxft ttf-dejavu \
     systemd-sysvcompat \
     sudo networkmanager \
     mkinitcpio grub efibootmgr \
