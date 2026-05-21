@@ -87,7 +87,7 @@ pacman -S --noconfirm --needed \
     linux linux-firmware \
     base base-devel \
     xorg-server xorg-xinit xorg-xrandr \
-    xfce4-terminal xterm nettle xorg-fonts-misc \
+    xfce4-terminal xterm dolphin nettle xorg-fonts-misc \
     systemd-sysvcompat \
     sudo networkmanager \
     mkinitcpio grub efibootmgr \

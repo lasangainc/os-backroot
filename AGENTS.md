@@ -121,7 +121,7 @@ Check zombies: `ps` STAT `Z` on qemu PID — remove stale `qemu.pid` before rest
 
 1. **Title bar:** App name from `_NET_WM_NAME` / `WM_NAME` / `WM_CLASS`, **centered**; buttons on the right.
 2. **Close:** Elongated X inside **red square** border (`draw_close_button`).
-3. **Right-click root:** Single item — **New terminal at root** (spawns `xterm` at `/`, `DISPLAY=:0`).
+3. **Right-click root:** **New terminal at root** (spawns `xterm` at `/`) and **Dolphin file explorer** (spawns `dolphin /`).
 4. **Taskbar:** Slightly transparent (alpha blend), **not blurred**; app badges (class letter / color); click restores minimized windows.
 5. **Minimize:** Unmaps frame; taskbar click must show window again without duplicate decorations.
 
@@ -168,14 +168,14 @@ After WM/panel changes:
 
 1. `make` both targets without warnings (fix new warnings).
 2. Deploy to VM or full `build-rootfs.sh` if overlay/systemd changed.
-3. In VNC: drag window, min/max/close, right-click terminal, minimize → taskbar restore.
+3. In VNC: drag window, min/max/close, right-click menu (terminal and Dolphin), minimize → taskbar restore.
 4. Open second terminal — two taskbar icons, no crash, single title bar each.
 5. Confirm `br8-panel` stays running: `ps aux | grep br8-panel` in guest.
 
 ## References
 
 - User-facing docs: [backroot8/README.md](backroot8/README.md)
-- Arch packages in image: `linux`, `xorg-server`, `xorg-xinit`, `xterm`, `nettle`, `networkmanager`, `openssh`
+- Arch packages in image: `linux`, `xorg-server`, `xorg-xinit`, `xterm`, `dolphin`, `nettle`, `networkmanager`, `openssh`
 - Active development branch (example): `cursor/backroot-8-4238`
 
 ## Cursor Cloud specific instructions

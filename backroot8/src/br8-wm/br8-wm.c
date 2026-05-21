@@ -12,6 +12,10 @@
 #include <signal.h>
 
 #define TITLE_H 28
+#define MENU_W 240
+#define MENU_ITEM_H 32
+#define MENU_ITEMS 2
+#define MENU_H (MENU_ITEMS * MENU_ITEM_H)
 #define BTN_W 22
 #define BTN_H 18
 #define BTN_PAD 4
@@ -220,6 +224,20 @@ static void spawn_terminal_root(void) {
     _exit(1);
 }
 
+static void spawn_dolphin_root(void) {
+    pid_t pid = fork();
+    if (pid < 0)
+        return;
+    if (pid > 0)
+        return;
+    if (chdir("/") != 0)
+        _exit(1);
+    setenv("HOME", "/root", 1);
+    setenv("DISPLAY", ":0", 1);
+    execl("/usr/bin/dolphin", "dolphin", "/", NULL);
+    _exit(1);
+}
+
 static void hide_menu(void) {
     if (menu_visible) {
         XUnmapWindow(dpy, menu_win);
@@ -234,8 +252,16 @@ static void show_menu(int x, int y) {
     menu_visible = 1;
 }
 
+static void draw_menu(void) {
+    XSetForeground(dpy, gc_btn, rgb(230, 230, 235));
+    XDrawString(dpy, menu_win, gc_btn, 12, 22,
+        "New terminal at root", 20);
+    XDrawString(dpy, menu_win, gc_btn, 12, 22 + MENU_ITEM_H,
+        "Dolphin file explorer", 21);
+}
+
 static void create_menu(void) {
-    menu_win = XCreateSimpleWindow(dpy, root, 0, 0, 220, 36, 1,
+    menu_win = XCreateSimpleWindow(dpy, root, 0, 0, MENU_W, MENU_H, 1,
         rgb(80, 80, 90), rgb(35, 38, 48));
     XSelectInput(dpy, menu_win, ExposureMask | ButtonPressMask);
     XUnmapWindow(dpy, menu_win);
@@ -526,8 +552,12 @@ int main(void) {
                 c->mapped = 0;
         } else if (ev.type == ButtonPress) {
             if (menu_visible && ev.xbutton.window == menu_win) {
+                int item = (int)(ev.xbutton.y / MENU_ITEM_H);
                 hide_menu();
-                spawn_terminal_root();
+                if (item <= 0)
+                    spawn_terminal_root();
+                else
+                    spawn_dolphin_root();
                 continue;
             }
             if (ev.xbutton.button == Button3 && ev.xbutton.window == root) {
@@ -558,11 +588,9 @@ int main(void) {
             drag_client->y = ev.xmotion.y_root - drag_y;
             XMoveWindow(dpy, drag_client->frame, drag_client->x, drag_client->y);
         } else if (ev.type == Expose) {
-            if (ev.xexpose.window == menu_win && ev.xexpose.count == 0) {
-                XSetForeground(dpy, gc_btn, rgb(230, 230, 235));
-                XDrawString(dpy, menu_win, gc_btn, 12, 22,
-                    "New terminal at root", 22);
-            } else {
+            if (ev.xexpose.window == menu_win && ev.xexpose.count == 0)
+                draw_menu();
+            else {
                 Client *c = find_client(ev.xexpose.window);
                 if (c) {
                     if (ev.xexpose.window == c->title)
