@@ -153,8 +153,18 @@ CHROOT
 log "Installing Backroot 8 desktop..."
 sudo install -Dm755 "$ROOT/src/br8-wm/br8-wm" "$MNT/usr/local/bin/br8-wm"
 sudo install -Dm755 "$ROOT/src/br8-panel/br8-panel" "$MNT/usr/local/bin/br8-panel"
-sudo install -Dm755 "$ROOT/src/backroot-hello/backroot-hello" "$MNT/usr/local/bin/backroot-hello"
-sudo install -Dm755 "$ROOT/src/br8-start-menu/br8-start-menu" "$MNT/usr/local/bin/br8-start-menu"
+log "Building GTK binaries inside Arch chroot..."
+sudo rm -rf "$MNT/tmp/br8-start-menu" "$MNT/tmp/backroot-hello"
+sudo cp -r "$ROOT/src/br8-start-menu" "$MNT/tmp/br8-start-menu"
+sudo cp -r "$ROOT/src/backroot-hello" "$MNT/tmp/backroot-hello"
+sudo arch-chroot "$MNT" /bin/bash -eux <<'CHROOT_BUILD'
+pacman -S --noconfirm --needed base-devel gtk4 pkgconf
+make -C /tmp/br8-start-menu clean br8-start-menu
+make -C /tmp/backroot-hello clean backroot-hello
+install -Dm755 /tmp/br8-start-menu/br8-start-menu /usr/local/bin/br8-start-menu
+install -Dm755 /tmp/backroot-hello/backroot-hello /usr/local/bin/backroot-hello
+rm -rf /tmp/br8-start-menu /tmp/backroot-hello
+CHROOT_BUILD
 sudo install -Dm644 "$ROOT/rootfs-overlay/usr/share/backroot/br8-start-menu/br8-start-menu.css" \
     "$MNT/usr/share/backroot/br8-start-menu/br8-start-menu.css"
 sudo install -Dm644 "$ROOT/rootfs-overlay/usr/share/backroot/backroot-hello/backroot-hello.css" \
