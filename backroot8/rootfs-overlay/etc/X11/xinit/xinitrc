@@ -24,6 +24,9 @@ fi
 /usr/share/backroot8/br8-panel-launcher.sh &
 PANEL_PID=$!
 
+# Start menu overlay (Home / Apps launcher)
+( while true; do /usr/local/bin/br8-start; sleep 1; done ) &
+
 # Default terminal at root (xterm)
 xterm -fa Monospace -fs 11 -bg "#1a1a22" -fg "#e8e8ec" -title root@Backroot8 -e /bin/bash -l &
 

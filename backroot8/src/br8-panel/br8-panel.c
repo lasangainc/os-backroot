@@ -41,7 +41,7 @@ static XftFont *ui_font;
 static Visual *visual;
 static Colormap xft_cmap;
 static int panel_w;
-static Atom br8_frame, br8_client, br8_panel_rev, br8_activate;
+static Atom br8_frame, br8_client, br8_panel_rev, br8_activate, br8_start_open;
 static Atom net_wm_icon, net_wm_name, utf8_string;
 static TaskBtn tasks[MAX_TASKS];
 static int ntasks;
@@ -314,6 +314,26 @@ static void draw_panel(void) {
     XRaiseWindow(dpy, panel);
 }
 
+static void toggle_start_menu(void) {
+    Atom actual;
+    int fmt;
+    unsigned long n, bytes;
+    unsigned long *data = NULL;
+    unsigned long v = 1;
+    if (XGetWindowProperty(dpy, root, br8_start_open, 0, 8, False, XA_CARDINAL,
+            &actual, &fmt, &n, &bytes, (unsigned char **)&data) == Success && data && n > 0)
+        v = data[0] ? 0 : 1;
+    if (data)
+        XFree(data);
+    XChangeProperty(dpy, root, br8_start_open, XA_CARDINAL, 32, PropModeReplace,
+        (unsigned char *)&v, 1);
+    XFlush(dpy);
+}
+
+static int emblem_clicked(int px) {
+    return px >= 0 && px < BRAND_W + 8;
+}
+
 static TaskBtn *task_at(int px) {
     for (int i = 0; i < ntasks; i++)
         if (px >= tasks[i].x && px < tasks[i].x + tasks[i].w)
@@ -378,6 +398,7 @@ int main(void) {
     br8_client = XInternAtom(dpy, "_BR8_CLIENT", False);
     br8_panel_rev = XInternAtom(dpy, "_BR8_PANEL_REV", False);
     br8_activate = XInternAtom(dpy, "_BR8_ACTIVATE", False);
+    br8_start_open = XInternAtom(dpy, "_BR8_START_OPEN", False);
     net_wm_icon = XInternAtom(dpy, "_NET_WM_ICON", False);
     net_wm_name = XInternAtom(dpy, "_NET_WM_NAME", False);
     utf8_string = XInternAtom(dpy, "UTF8_STRING", False);
@@ -424,9 +445,13 @@ int main(void) {
                 XMoveResizeWindow(dpy, panel, 0, ra.height - PANEL_H, ra.width, PANEL_H);
                 draw_panel();
             } else if (ev.type == ButtonPress && ev.xbutton.window == panel) {
-                TaskBtn *t = task_at(ev.xbutton.x);
-                if (t)
-                    activate_task(t);
+                if (emblem_clicked(ev.xbutton.x))
+                    toggle_start_menu();
+                else {
+                    TaskBtn *t = task_at(ev.xbutton.x);
+                    if (t)
+                        activate_task(t);
+                }
             } else if (ev.type == PropertyNotify &&
                        (ev.xproperty.window == root && ev.xproperty.atom == br8_panel_rev)) {
                 last_rev = read_panel_rev();

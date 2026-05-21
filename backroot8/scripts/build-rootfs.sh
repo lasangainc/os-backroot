@@ -31,6 +31,7 @@ make -C "$ROOT/src/br8-panel" emblem.h
 log "Building binaries..."
 make -C "$ROOT/src/br8-wm" clean br8-wm
 make -C "$ROOT/src/br8-panel" clean br8-panel
+make -C "$ROOT/src/br8-start" clean br8-start
 make -C "$ROOT/src/backroot-hello" clean backroot-hello
 
 if [[ ! -f "$BOOTSTRAP" ]]; then
@@ -152,6 +153,7 @@ CHROOT
 log "Installing Backroot 8 desktop..."
 sudo install -Dm755 "$ROOT/src/br8-wm/br8-wm" "$MNT/usr/local/bin/br8-wm"
 sudo install -Dm755 "$ROOT/src/br8-panel/br8-panel" "$MNT/usr/local/bin/br8-panel"
+sudo install -Dm755 "$ROOT/src/br8-start/br8-start" "$MNT/usr/local/bin/br8-start"
 sudo install -Dm755 "$ROOT/src/backroot-hello/backroot-hello" "$MNT/usr/local/bin/backroot-hello"
 sudo install -Dm644 "$ROOT/rootfs-overlay/usr/share/backroot/backroot-hello/backroot-hello.css" \
     "$MNT/usr/share/backroot/backroot-hello/backroot-hello.css"
