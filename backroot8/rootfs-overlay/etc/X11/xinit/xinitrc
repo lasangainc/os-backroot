@@ -1,0 +1,21 @@
+#!/bin/sh
+# Backroot 8 session startup
+export DESKTOP_SESSION=backroot8
+export DISPLAY=:0
+xrdb -merge /etc/X11/Xresources 2>/dev/null || true
+WALLPAPER=/usr/share/backgrounds/backroot8.jpg
+if command -v feh >/dev/null && [ -r "$WALLPAPER" ]; then
+    feh --bg-fill "$WALLPAPER" &
+else
+    xsetroot -solid "#1e2030"
+fi
+
+# Panel first (transparent taskbar, no blur); restart if it exits
+( while true; do /usr/local/bin/br8-panel; sleep 1; done ) &
+PANEL_PID=$!
+
+# Default terminal at root (xterm)
+xterm -fa Monospace -fs 11 -bg "#1a1a22" -fg "#e8e8ec" -title root@Backroot8 -e /bin/bash -l &
+
+# Window manager (exec keeps the X session alive)
+exec /usr/local/bin/br8-wm
