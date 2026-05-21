@@ -1102,6 +1102,7 @@ static void tile_screen_rect(const Tile *t, int ti, int dragging_now,
 }
 
 static void clear_home_region(Drawable dst, GC g) {
+    XSetForeground(dpy, g, pix_bg);
     int top = 0;
     int bot = home_h - scroll_y + TILE_GAP;
     for (int s = 0; s < n_tile_order; s++) {
