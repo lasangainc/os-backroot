@@ -27,6 +27,7 @@ trap cleanup_mounts EXIT
 log "Building binaries..."
 make -C "$ROOT/src/br8-wm" clean br8-wm
 make -C "$ROOT/src/br8-panel" clean br8-panel
+make -C "$ROOT/src/backroot-hello" clean backroot-hello
 
 if [[ ! -f "$BOOTSTRAP" ]]; then
     log "Downloading Arch bootstrap..."
@@ -87,7 +88,7 @@ pacman -S --noconfirm --needed \
     linux linux-firmware \
     base base-devel \
     xorg-server xorg-xinit xorg-xrandr xf86-video-vesa \
-    xterm dolphin feh nettle xorg-fonts-misc libxft ttf-dejavu \
+    xterm dolphin feh nettle xorg-fonts-misc libxft ttf-dejavu gtk4 \
     systemd-sysvcompat \
     sudo networkmanager \
     mkinitcpio grub efibootmgr \
@@ -147,6 +148,13 @@ CHROOT
 log "Installing Backroot 8 desktop..."
 sudo install -Dm755 "$ROOT/src/br8-wm/br8-wm" "$MNT/usr/local/bin/br8-wm"
 sudo install -Dm755 "$ROOT/src/br8-panel/br8-panel" "$MNT/usr/local/bin/br8-panel"
+sudo install -Dm755 "$ROOT/src/backroot-hello/backroot-hello" "$MNT/usr/local/bin/backroot-hello"
+sudo install -Dm644 "$ROOT/rootfs-overlay/usr/share/backroot/backroot-hello/backroot-hello.css" \
+    "$MNT/usr/share/backroot/backroot-hello/backroot-hello.css"
+sudo install -Dm644 "$ROOT/rootfs-overlay/usr/share/backroot/README" \
+    "$MNT/usr/share/backroot/README"
+sudo install -Dm644 "$ROOT/rootfs-overlay/usr/share/applications/backroot-hello.desktop" \
+    "$MNT/usr/share/applications/backroot-hello.desktop"
 
 sudo install -Dm755 "$ROOT/rootfs-overlay/etc/X11/xinit/xinitrc" "$MNT/etc/X11/xinit/xinitrc"
 sudo install -Dm644 "$ROOT/rootfs-overlay/usr/share/backgrounds/backroot8.jpg" \

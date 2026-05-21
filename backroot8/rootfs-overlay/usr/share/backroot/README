@@ -1,0 +1,7 @@
+Backroot system tools live under /usr/share/backroot/.
+
+Applications:
+  backroot-hello  —  /usr/local/bin/backroot-hello
+                     Keyboard layout and timezone configuration (GTK4)
+
+Launch from a terminal or run: backroot-hello
