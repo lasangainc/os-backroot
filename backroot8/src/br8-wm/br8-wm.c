@@ -52,7 +52,13 @@ static int drag_x, drag_y;
 static Client *drag_client;
 static Window menu_win;
 static int menu_visible;
+static int menu_hover = -1;
 static unsigned long panel_rev;
+
+static const char *const menu_labels[MENU_ITEMS] = {
+    "New terminal at root",
+    "Dolphin file explorer",
+};
 
 static unsigned long rgb(int r, int g, int b) {
     XColor c;
@@ -238,34 +244,68 @@ static void spawn_dolphin_root(void) {
     _exit(1);
 }
 
+static void draw_menu(void);
+
+static int menu_item_at(int y) {
+    int item = y / MENU_ITEM_H;
+    if (item < 0)
+        return 0;
+    if (item >= MENU_ITEMS)
+        return MENU_ITEMS - 1;
+    return item;
+}
+
 static void hide_menu(void) {
     if (menu_visible) {
         XUnmapWindow(dpy, menu_win);
         menu_visible = 0;
+        menu_hover = -1;
     }
 }
 
 static void show_menu(int x, int y) {
     hide_menu();
+    menu_hover = 0;
     XMoveWindow(dpy, menu_win, x, y);
     XMapRaised(dpy, menu_win);
     menu_visible = 1;
+    draw_menu();
 }
 
 static void draw_menu(void) {
-    XSetForeground(dpy, gc_btn, rgb(230, 230, 235));
-    XDrawString(dpy, menu_win, gc_btn, 12, 22,
-        "New terminal at root", 20);
-    XDrawString(dpy, menu_win, gc_btn, 12, 22 + MENU_ITEM_H,
-        "Dolphin file explorer", 21);
+    XSetForeground(dpy, gc_title, rgb(35, 38, 48));
+    XFillRectangle(dpy, menu_win, gc_title, 0, 0, MENU_W, MENU_H);
+
+    for (int i = 0; i < MENU_ITEMS; i++) {
+        int y0 = i * MENU_ITEM_H;
+        if (i == menu_hover) {
+            XSetForeground(dpy, gc_title, rgb(48, 82, 138));
+            XFillRectangle(dpy, menu_win, gc_title, 1, y0 + 1, MENU_W - 2, MENU_ITEM_H - 2);
+        }
+        XSetForeground(dpy, gc_btn, rgb(230, 230, 235));
+        XDrawString(dpy, menu_win, gc_btn, 12, y0 + 22,
+            menu_labels[i], (int)strlen(menu_labels[i]));
+    }
+}
+
+static void menu_set_hover(int item) {
+    if (item < 0 || item >= MENU_ITEMS)
+        item = -1;
+    if (item == menu_hover)
+        return;
+    menu_hover = item;
+    if (menu_visible)
+        draw_menu();
 }
 
 static void create_menu(void) {
     menu_win = XCreateSimpleWindow(dpy, root, 0, 0, MENU_W, MENU_H, 1,
         rgb(80, 80, 90), rgb(35, 38, 48));
-    XSelectInput(dpy, menu_win, ExposureMask | ButtonPressMask);
+    XSelectInput(dpy, menu_win,
+        ExposureMask | ButtonPressMask | PointerMotionMask | LeaveWindowMask);
     XUnmapWindow(dpy, menu_win);
     menu_visible = 0;
+    menu_hover = -1;
 }
 
 static void layout_client(Client *c) {
@@ -552,9 +592,9 @@ int main(void) {
                 c->mapped = 0;
         } else if (ev.type == ButtonPress) {
             if (menu_visible && ev.xbutton.window == menu_win) {
-                int item = (int)(ev.xbutton.y / MENU_ITEM_H);
+                int item = menu_item_at((int)ev.xbutton.y);
                 hide_menu();
-                if (item <= 0)
+                if (item == 0)
                     spawn_terminal_root();
                 else
                     spawn_dolphin_root();
@@ -583,10 +623,19 @@ int main(void) {
         } else if (ev.type == ButtonRelease && dragging) {
             dragging = 0;
             drag_client = NULL;
-        } else if (ev.type == MotionNotify && dragging && drag_client) {
-            drag_client->x = ev.xmotion.x_root - drag_x;
-            drag_client->y = ev.xmotion.y_root - drag_y;
-            XMoveWindow(dpy, drag_client->frame, drag_client->x, drag_client->y);
+        } else if (ev.type == MotionNotify) {
+            if (menu_visible && ev.xmotion.window == menu_win) {
+                menu_set_hover(menu_item_at((int)ev.xmotion.y));
+                continue;
+            }
+            if (dragging && drag_client) {
+                drag_client->x = ev.xmotion.x_root - drag_x;
+                drag_client->y = ev.xmotion.y_root - drag_y;
+                XMoveWindow(dpy, drag_client->frame, drag_client->x, drag_client->y);
+            }
+        } else if (ev.type == LeaveNotify && menu_visible &&
+                   ev.xcrossing.window == menu_win) {
+            menu_set_hover(-1);
         } else if (ev.type == Expose) {
             if (ev.xexpose.window == menu_win && ev.xexpose.count == 0)
                 draw_menu();
