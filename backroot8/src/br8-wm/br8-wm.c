@@ -14,9 +14,14 @@
 #include <signal.h>
 #include <sys/stat.h>
 #include <sys/select.h>
+#include <sys/time.h>
 #include <ctype.h>
-
 #define TITLE_H 30
+#define METRO_CORNER 36
+#define METRO_SWIPE_ZONE 56
+#define METRO_SWIPE_THRESHOLD 72
+#define METRO_CLOSE_MS 180.0
+#define METRO_ANIM_TICK_MS 8
 #define PANEL_H 32
 #define MENU_W 240
 #define MENU_ITEM_H 32
@@ -51,7 +56,18 @@ typedef struct {
     int mapped;
     int maximized;
     int saved_x, saved_y, saved_w, saved_h;
+    int metro;
 } Client;
+
+typedef struct {
+    int active;
+    double t0;
+    Window overlay;
+    Pixmap snap;
+    XImage *img;
+    int sw, sh;
+    Client *c;
+} MetroCloseAnim;
 
 static Display *dpy;
 static int screen;
@@ -64,6 +80,13 @@ static GC gc_title, gc_btn, gc_close_fill, gc_close_x;
 static Atom wm_protocols, wm_delete;
 static Atom net_wm_name, net_client_list, utf8_string;
 static Atom br8_frame, br8_client, br8_panel_rev, br8_activate;
+static Atom br8_metro, br8_start_open, br8_metro_active;
+static MetroCloseAnim metro_close;
+static void unmap_client(Client *c);
+static void remove_client(Client *c);
+static int metro_swipe;
+static int metro_swipe_y;
+static struct timeval metro_corner_cooldown;
 static Atom net_wm_window_type, net_wm_window_type_desktop;
 static Client clients[256];
 static int nclients;
@@ -709,6 +732,254 @@ static void create_crash_windows(void) {
     crash_drawer_open = 0;
 }
 
+static double now_ms(void) {
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    return tv.tv_sec * 1000.0 + tv.tv_usec / 1000.0;
+}
+
+static double ease_out_cubic(double t) {
+    if (t <= 0.0)
+        return 0.0;
+    if (t >= 1.0)
+        return 1.0;
+    double u = 1.0 - t;
+    return 1.0 - u * u * u;
+}
+
+static int client_has_metro_flag(Window w) {
+    Atom actual;
+    int fmt;
+    unsigned long n, bytes;
+    unsigned long *data = NULL;
+    int metro = 0;
+
+    if (XGetWindowProperty(dpy, w, br8_metro, 0, 1, False, XA_CARDINAL,
+            &actual, &fmt, &n, &bytes, (unsigned char **)&data) == Success &&
+        data && n > 0 && data[0])
+        metro = 1;
+    if (data)
+        XFree(data);
+    return metro;
+}
+
+static void update_metro_root_state(void) {
+    int any = 0;
+    for (int i = 0; i < nclients; i++) {
+        if (clients[i].metro && clients[i].mapped) {
+            any = 1;
+            break;
+        }
+    }
+    unsigned long v = any ? 1 : 0;
+    XChangeProperty(dpy, root, br8_metro_active, XA_CARDINAL, 32, PropModeReplace,
+        (unsigned char *)&v, 1);
+}
+
+static void open_start_menu(void) {
+    unsigned long one = 1;
+    XChangeProperty(dpy, root, br8_start_open, XA_CARDINAL, 32, PropModeReplace,
+        (unsigned char *)&one, 1);
+}
+
+static Client *top_metro_client(void) {
+    Client *best = NULL;
+    for (int i = 0; i < nclients; i++) {
+        if (!clients[i].metro || !clients[i].mapped)
+            continue;
+        if (!best)
+            best = &clients[i];
+        else
+            best = &clients[i];
+    }
+    return best;
+}
+
+static void metro_return_to_start(Client *c) {
+    if (!c || !c->metro)
+        return;
+    unmap_client(c);
+    open_start_menu();
+}
+
+static int pointer_in_corner(int x, int y) {
+    if (x < METRO_CORNER && y < METRO_CORNER)
+        return 1;
+    if (x >= root_w - METRO_CORNER && y < METRO_CORNER)
+        return 1;
+    if (x < METRO_CORNER && y >= root_h - METRO_CORNER)
+        return 1;
+    if (x >= root_w - METRO_CORNER && y >= root_h - METRO_CORNER)
+        return 1;
+    return 0;
+}
+
+static void metro_check_corner_gesture(int x, int y) {
+    Client *c = top_metro_client();
+    if (!c || !pointer_in_corner(x, y))
+        return;
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    if (metro_corner_cooldown.tv_sec &&
+        (tv.tv_sec - metro_corner_cooldown.tv_sec) * 1000 +
+            (tv.tv_usec - metro_corner_cooldown.tv_usec) / 1000 < 400)
+        return;
+    metro_corner_cooldown = tv;
+    metro_return_to_start(c);
+}
+
+static void metro_check_swipe_gesture(XMotionEvent *ev) {
+    if (!metro_swipe)
+        return;
+    Client *c = top_metro_client();
+    if (!c)
+        return;
+    if (metro_swipe_y - ev->y_root >= METRO_SWIPE_THRESHOLD)
+        metro_return_to_start(c);
+    metro_swipe = 0;
+}
+
+static void layout_metro_client(Client *c) {
+    XMoveResizeWindow(dpy, c->client, 0, 0, c->w, c->h);
+}
+
+static void hide_metro_chrome(Client *c) {
+    XUnmapWindow(dpy, c->title);
+    XUnmapWindow(dpy, c->btn_min);
+    XUnmapWindow(dpy, c->btn_max);
+    XUnmapWindow(dpy, c->btn_close);
+    XUnmapWindow(dpy, c->resize_grip);
+}
+
+static void scale_snap_draw(Pixmap dst, GC gc, XImage *src, int sw, int sh,
+    int dw, int dh, int dx, int dy, double alpha) {
+    unsigned long bg = rgb(30, 32, 42);
+    int bg_r = 30, bg_g = 32, bg_b = 42;
+
+    XSetForeground(dpy, gc, bg);
+    XFillRectangle(dpy, dst, gc, dx, dy, dw, dh);
+
+    if (!src || sw < 1 || sh < 1 || dw < 1 || dh < 1)
+        return;
+
+    float xscale = (float)sw / (float)dw;
+    float yscale = (float)sh / (float)dh;
+    XImage *out = XCreateImage(dpy, DefaultVisual(dpy, screen), src->depth,
+        ZPixmap, 0, NULL, (unsigned int)dw, (unsigned int)dh, 32, 0);
+    if (!out)
+        return;
+    out->data = malloc((size_t)dw * (size_t)dh * 4);
+    if (!out->data) {
+        XDestroyImage(out);
+        return;
+    }
+
+    for (int y = 0; y < dh; y++) {
+        int sy = (int)(y * yscale);
+        if (sy >= sh)
+            sy = sh - 1;
+        for (int x = 0; x < dw; x++) {
+            int sx = (int)(x * xscale);
+            if (sx >= sw)
+                sx = sw - 1;
+            unsigned long px = XGetPixel(src, sx, sy);
+            int pr = (int)((px >> 16) & 0xff);
+            int pg = (int)((px >> 8) & 0xff);
+            int pb = (int)(px & 0xff);
+            int a = (int)(alpha * 255.0);
+            int r = (pr * a + bg_r * (255 - a)) / 255;
+            int g = (pg * a + bg_g * (255 - a)) / 255;
+            int b = (pb * a + bg_b * (255 - a)) / 255;
+            XPutPixel(out, x, y, (unsigned long)((r << 16) | (g << 8) | b));
+        }
+    }
+    XPutImage(dpy, dst, gc, out, 0, 0, dx, dy, dw, dh);
+    free(out->data);
+    XDestroyImage(out);
+}
+
+static void metro_close_finish(void) {
+    Client *c = metro_close.c;
+    if (metro_close.img) {
+        XDestroyImage(metro_close.img);
+        metro_close.img = NULL;
+    }
+    if (metro_close.snap) {
+        XFreePixmap(dpy, metro_close.snap);
+        metro_close.snap = 0;
+    }
+    if (metro_close.overlay) {
+        XDestroyWindow(dpy, metro_close.overlay);
+        metro_close.overlay = 0;
+    }
+    metro_close.active = 0;
+    metro_close.c = NULL;
+    if (c)
+        remove_client(c);
+    update_metro_root_state();
+}
+
+static void metro_close_tick(void) {
+    if (!metro_close.active || !metro_close.img)
+        return;
+
+    double elapsed = now_ms() - metro_close.t0;
+    double t = elapsed / METRO_CLOSE_MS;
+    if (t >= 1.0) {
+        metro_close_finish();
+        return;
+    }
+
+    double e = ease_out_cubic(t);
+    double scale = 1.0 - e * 0.22;
+    double alpha = 1.0 - e;
+    int dw = (int)(metro_close.sw * scale);
+    int dh = (int)(metro_close.sh * scale);
+    if (dw < 32)
+        dw = 32;
+    if (dh < 32)
+        dh = 32;
+    int dx = (root_w - dw) / 2;
+    int dy = (root_h - dh) / 2;
+
+    GC gc = XCreateGC(dpy, metro_close.snap, 0, NULL);
+    XSetForeground(dpy, gc, rgb(30, 32, 42));
+    XFillRectangle(dpy, metro_close.snap, gc, 0, 0, root_w, root_h);
+    scale_snap_draw(metro_close.snap, gc, metro_close.img, metro_close.sw, metro_close.sh,
+        dw, dh, dx, dy, alpha);
+    XCopyArea(dpy, metro_close.snap, metro_close.overlay, gc, 0, 0, root_w, root_h, 0, 0);
+    XFreeGC(dpy, gc);
+    XFlush(dpy);
+}
+
+static int metro_close_begin(Client *c) {
+    if (!c || !c->metro || metro_close.active)
+        return 0;
+
+    XImage *img = XGetImage(dpy, c->frame, 0, 0, c->w, c->h, AllPlanes, ZPixmap);
+    if (!img)
+        return 0;
+
+    XUnmapWindow(dpy, c->frame);
+
+    XSetWindowAttributes attr;
+    attr.override_redirect = True;
+    attr.event_mask = ExposureMask;
+    metro_close.overlay = XCreateSimpleWindow(dpy, root, 0, 0, root_w, root_h, 0, 0, 0);
+    XChangeWindowAttributes(dpy, metro_close.overlay, CWOverrideRedirect | CWEventMask, &attr);
+    metro_close.snap = XCreatePixmap(dpy, root, root_w, root_h, DefaultDepth(dpy, screen));
+    metro_close.img = img;
+    metro_close.sw = c->w;
+    metro_close.sh = c->h;
+    metro_close.c = c;
+    metro_close.t0 = now_ms();
+    metro_close.active = 1;
+
+    XMapRaised(dpy, metro_close.overlay);
+    metro_close_tick();
+    return 1;
+}
+
 static void handle_crash_button(XButtonEvent *btn) {
     if (btn->window == crash_bar) {
         if (crash_bar_click((int)btn->y))
@@ -756,18 +1027,25 @@ static void resize_client_to(Client *c, int w, int h) {
 
 static void map_client(Client *c) {
     XMapWindow(dpy, c->frame);
-    XMapSubwindows(dpy, c->frame);
+    if (c->metro)
+        XMapWindow(dpy, c->client);
+    else
+        XMapSubwindows(dpy, c->frame);
     c->mapped = 1;
     bump_panel();
+    update_metro_root_state();
 }
 
 static void unmap_client(Client *c) {
     XUnmapWindow(dpy, c->frame);
     c->mapped = 0;
     bump_panel();
+    update_metro_root_state();
 }
 
 static void close_client(Client *c) {
+    if (c->metro && metro_close_begin(c))
+        return;
     XEvent ev;
     memset(&ev, 0, sizeof(ev));
     ev.xclient.type = ClientMessage;
@@ -854,11 +1132,22 @@ static void add_client(Window w) {
     int client_h = wa.height < 300 ? 400 : wa.height;
     c->x = 80 + nclients * 24;
     c->y = 60 + nclients * 24;
+    c->metro = client_has_metro_flag(w);
     read_client_hints(w, &c->x, &c->y, &client_w, &client_h);
-    c->w = client_w;
-    c->h = client_h + TITLE_H;
-    update_root_geom();
-    clamp_client_geometry(c);
+    if (c->metro) {
+        update_root_geom();
+        c->x = 0;
+        c->y = 0;
+        c->w = root_w;
+        c->h = root_h;
+        client_w = root_w;
+        client_h = root_h;
+    } else {
+        c->w = client_w;
+        c->h = client_h + TITLE_H;
+        update_root_geom();
+        clamp_client_geometry(c);
+    }
 
     c->frame = XCreateSimpleWindow(dpy, root, c->x, c->y, c->w, c->h, 2,
         rgb(70, 75, 90), rgb(28, 30, 38));
@@ -877,12 +1166,27 @@ static void add_client(Window w) {
         ButtonPressMask | ButtonReleaseMask | PointerMotionMask | ExposureMask);
     XSelectInput(dpy, c->client, PropertyChangeMask);
 
-    XReparentWindow(dpy, w, c->frame, 0, TITLE_H);
+    if (c->metro) {
+        XReparentWindow(dpy, w, c->frame, 0, 0);
+        hide_metro_chrome(c);
+        layout_metro_client(c);
+        XSelectInput(dpy, c->frame,
+            SubstructureRedirectMask | SubstructureNotifyMask |
+            ButtonPressMask | ButtonReleaseMask | PointerMotionMask);
+    } else {
+        XReparentWindow(dpy, w, c->frame, 0, TITLE_H);
+        layout_client(c);
+    }
     tag_frame(c);
     fetch_client_title(c);
-    layout_client(c);
     map_client(c);
     update_net_client_list();
+
+    if (c->metro) {
+        raise_client(c);
+        update_metro_root_state();
+        return;
+    }
 
     XGrabButton(dpy, Button1, AnyModifier, c->title, False,
         ButtonPressMask | ButtonReleaseMask | PointerMotionMask,
@@ -900,10 +1204,13 @@ static void remove_client(Client *c) {
     int idx = c - clients;
     if (idx < 0 || idx >= nclients)
         return;
+    if (metro_close.active && metro_close.c == c)
+        return;
     XDestroyWindow(dpy, c->frame);
     memmove(&clients[idx], &clients[idx + 1], (nclients - idx - 1) * sizeof(Client));
     nclients--;
     update_net_client_list();
+    update_metro_root_state();
 }
 
 static void handle_root_activate(void) {
@@ -998,12 +1305,22 @@ static void handle_client_message(XClientMessageEvent *e) {
 static void handle_destroy(XDestroyWindowEvent *e) {
     if (e->window == menu_win)
         return;
+    if (metro_close.active && metro_close.overlay == e->window)
+        return;
     for (int i = 0; i < nclients; i++) {
         if (clients[i].client == e->window) {
+            if (metro_close.active && metro_close.c == &clients[i]) {
+                metro_close_finish();
+                return;
+            }
             remove_client(&clients[i]);
             return;
         }
         if (clients[i].frame == e->window) {
+            if (metro_close.active && metro_close.c == &clients[i]) {
+                metro_close_finish();
+                return;
+            }
             remove_client(&clients[i]);
             return;
         }
@@ -1054,11 +1371,15 @@ int main(void) {
     br8_client = XInternAtom(dpy, "_BR8_CLIENT", False);
     br8_panel_rev = XInternAtom(dpy, "_BR8_PANEL_REV", False);
     br8_activate = XInternAtom(dpy, "_BR8_ACTIVATE", False);
+    br8_metro = XInternAtom(dpy, "_BR8_METRO", False);
+    br8_start_open = XInternAtom(dpy, "_BR8_START_OPEN", False);
+    br8_metro_active = XInternAtom(dpy, "_BR8_METRO_ACTIVE", False);
     net_wm_window_type = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE", False);
     net_wm_window_type_desktop = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE_DESKTOP", False);
 
     XSelectInput(dpy, root,
         SubstructureRedirectMask | SubstructureNotifyMask | ButtonPressMask |
+        ButtonReleaseMask | PointerMotionMask |
         PropertyChangeMask | StructureNotifyMask);
     XSetErrorHandler(NULL);
     signal(SIGCHLD, SIG_IGN);
@@ -1084,13 +1405,19 @@ int main(void) {
         poll_panel_crash();
 
         if (!XPending(dpy)) {
+            if (metro_close.active)
+                metro_close_tick();
             struct timeval tv = { .tv_sec = 0, .tv_usec = 250000 };
+            if (metro_close.active)
+                tv.tv_usec = METRO_ANIM_TICK_MS * 1000;
             int xfd = ConnectionNumber(dpy);
             fd_set fds;
             FD_ZERO(&fds);
             FD_SET(xfd, &fds);
             select(xfd + 1, &fds, NULL, NULL, &tv);
             poll_panel_crash();
+            if (metro_close.active)
+                metro_close_tick();
         }
 
         XEvent ev;
@@ -1114,6 +1441,16 @@ int main(void) {
                 c->mapped = 0;
         } else if (ev.type == ConfigureNotify && ev.xconfigure.window == root) {
             update_root_geom();
+            for (int i = 0; i < nclients; i++) {
+                if (clients[i].metro && clients[i].mapped) {
+                    clients[i].x = 0;
+                    clients[i].y = 0;
+                    clients[i].w = root_w;
+                    clients[i].h = root_h;
+                    XMoveResizeWindow(dpy, clients[i].frame, 0, 0, root_w, root_h);
+                    layout_metro_client(&clients[i]);
+                }
+            }
             if (crash_visible)
                 layout_crash_windows();
         } else if (ev.type == ButtonPress) {
@@ -1134,9 +1471,24 @@ int main(void) {
                 show_menu(ev.xbutton.x_root, ev.xbutton.y_root);
                 continue;
             }
+            if (ev.xbutton.window == root) {
+                if (ev.xbutton.y_root >= root_h - METRO_SWIPE_ZONE) {
+                    metro_swipe = 1;
+                    metro_swipe_y = ev.xbutton.y_root;
+                }
+                hide_menu();
+                continue;
+            }
             hide_menu();
             Client *c = find_client(ev.xbutton.window);
             if (!c)
+                continue;
+            if (c->metro && ev.xbutton.y_root >= root_h - METRO_SWIPE_ZONE) {
+                metro_swipe = 1;
+                metro_swipe_y = ev.xbutton.y_root;
+                continue;
+            }
+            if (c->metro)
                 continue;
             if (ev.xbutton.window == c->btn_close)
                 close_client(c);
@@ -1160,17 +1512,30 @@ int main(void) {
                 resize_w = c->w;
                 resize_h = c->h;
             }
-        } else if (ev.type == ButtonRelease && (dragging || resizing)) {
-            dragging = 0;
-            drag_client = NULL;
-            resizing = 0;
-            resize_client = NULL;
+        } else if (ev.type == ButtonRelease) {
+            if (metro_swipe)
+                metro_swipe = 0;
+            if (dragging || resizing) {
+                dragging = 0;
+                drag_client = NULL;
+                resizing = 0;
+                resize_client = NULL;
+            }
         } else if (ev.type == MotionNotify) {
+            if (metro_swipe && (ev.xmotion.state & Button1Mask))
+                metro_check_swipe_gesture(&ev.xmotion);
+            if (ev.xmotion.window == root)
+                metro_check_corner_gesture(ev.xmotion.x_root, ev.xmotion.y_root);
+            else {
+                Client *mc = find_client(ev.xmotion.window);
+                if (mc && mc->metro)
+                    metro_check_corner_gesture(ev.xmotion.x_root, ev.xmotion.y_root);
+            }
             if (menu_visible && ev.xmotion.window == menu_win) {
                 menu_set_hover(menu_item_at((int)ev.xmotion.y));
                 continue;
             }
-            if (dragging && drag_client) {
+            if (dragging && drag_client && !drag_client->metro) {
                 drag_client->x = ev.xmotion.x_root - drag_x;
                 drag_client->y = ev.xmotion.y_root - drag_y;
                 clamp_client_geometry(drag_client);
