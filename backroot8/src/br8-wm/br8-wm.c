@@ -721,7 +721,7 @@ static void handle_crash_button(XButtonEvent *btn) {
         toggle_crash_drawer();
 }
 
-static void layout_client(Client *c) {
+static void layout_chrome_geometry(Client *c) {
     int tx = c->w - btn_total_width();
     int grip_x = c->w - RESIZE_SZ;
     int grip_y = c->h - RESIZE_SZ;
@@ -732,7 +732,6 @@ static void layout_client(Client *c) {
         grip_y = TITLE_H;
 
     XMoveResizeWindow(dpy, c->title, 0, 0, c->w, TITLE_H);
-    XMoveResizeWindow(dpy, c->client, 0, TITLE_H, c->w, c->h - TITLE_H);
     XMoveResizeWindow(dpy, c->btn_min, tx, 0, BTN_W, TITLE_H);
     tx += BTN_W;
     XMoveResizeWindow(dpy, c->btn_max, tx, 0, BTN_W, TITLE_H);
@@ -740,10 +739,19 @@ static void layout_client(Client *c) {
     XMoveResizeWindow(dpy, c->btn_close, tx, 0, CLOSE_W, TITLE_H);
     XMoveResizeWindow(dpy, c->resize_grip, grip_x, grip_y, RESIZE_SZ, RESIZE_SZ);
     XRaiseWindow(dpy, c->resize_grip);
+}
+
+static void layout_client_area(Client *c) {
+    XMoveResizeWindow(dpy, c->client, 0, TITLE_H, c->w, c->h - TITLE_H);
+}
+
+static void layout_client(Client *c) {
+    layout_chrome_geometry(c);
+    layout_client_area(c);
     draw_chrome(c);
 }
 
-static void resize_client_to(Client *c, int w, int h) {
+static void resize_frame_live(Client *c, int w, int h) {
     if (w < MIN_FRAME_W)
         w = MIN_FRAME_W;
     if (h < MIN_FRAME_H)
@@ -751,7 +759,17 @@ static void resize_client_to(Client *c, int w, int h) {
     c->w = w;
     c->h = h;
     XMoveResizeWindow(dpy, c->frame, c->x, c->y, c->w, c->h);
-    layout_client(c);
+    layout_chrome_geometry(c);
+}
+
+static int chrome_expose_suppressed(Client *c) {
+    return (resizing && c == resize_client) || (dragging && c == drag_client);
+}
+
+static void coalesce_motion(XEvent *ev) {
+    XEvent newer;
+    while (XCheckTypedEvent(dpy, MotionNotify, &newer))
+        *ev = newer;
 }
 
 static void map_client(Client *c) {
@@ -1161,11 +1179,17 @@ int main(void) {
                 resize_h = c->h;
             }
         } else if (ev.type == ButtonRelease && (dragging || resizing)) {
+            int was_resizing = resizing;
+            Client *done = resize_client;
             dragging = 0;
             drag_client = NULL;
             resizing = 0;
             resize_client = NULL;
+            if (was_resizing && done)
+                layout_client(done);
         } else if (ev.type == MotionNotify) {
+            if (dragging || resizing)
+                coalesce_motion(&ev);
             if (menu_visible && ev.xmotion.window == menu_win) {
                 menu_set_hover(menu_item_at((int)ev.xmotion.y));
                 continue;
@@ -1178,7 +1202,7 @@ int main(void) {
             } else if (resizing && resize_client) {
                 int nw = resize_w + (ev.xmotion.x_root - resize_x);
                 int nh = resize_h + (ev.xmotion.y_root - resize_y);
-                resize_client_to(resize_client, nw, nh);
+                resize_frame_live(resize_client, nw, nh);
             }
         } else if (ev.type == LeaveNotify && menu_visible &&
                    ev.xcrossing.window == menu_win) {
@@ -1192,7 +1216,7 @@ int main(void) {
                 draw_menu();
             else {
                 Client *c = find_client(ev.xexpose.window);
-                if (c) {
+                if (c && !chrome_expose_suppressed(c)) {
                     if (ev.xexpose.window == c->title)
                         draw_title(c);
                     else if (ev.xexpose.window == c->btn_min)
