@@ -16,6 +16,7 @@ esac
 VM_DIR="$ROOT/vm"
 DISK="$VM_DIR/backroot8-${ARCH}.img"
 BOOTSTRAP="$VM_DIR/archlinux-bootstrap-${ARCH}.tar.zst"
+PACMAN_ALARM_CONF="$VM_DIR/pacman-alarm-aarch64.conf"
 MNT="$VM_DIR/mnt"
 SIZE_MB="${DISK_SIZE_MB:-6144}"
 HOST_ARCH="$(uname -m)"
@@ -25,9 +26,17 @@ NATIVE_BUILD=0
 if [[ "$ARCH" == "aarch64" ]]; then
     XORG_DRV=xf86-video-modesetting
     GRUB_TARGET=arm64-efi
+    KERNEL_PKG=linux-aarch64
+    VMLINUZ=vmlinuz-linux-aarch64
+    INITRD_IMG=initramfs-linux-aarch64.img
+    USE_ALARM=1
 else
     XORG_DRV=xf86-video-vesa
     GRUB_TARGET=i386-pc
+    KERNEL_PKG=linux
+    VMLINUZ=vmlinuz-linux
+    INITRD_IMG=initramfs-linux.img
+    USE_ALARM=0
 fi
 
 log() { echo "[backroot8:$ARCH] $*"; }
@@ -54,6 +63,38 @@ setup_aarch64_chroot() {
     sudo mkdir -p "$MNT/usr/bin"
     sudo cp -f "$qemu_static" "$MNT/usr/bin/qemu-aarch64-static"
     sudo chmod 755 "$MNT/usr/bin/qemu-aarch64-static"
+}
+
+write_alarm_pacman_conf() {
+    cat >"$PACMAN_ALARM_CONF" <<'EOF'
+[options]
+HoldPkg     = pacman glibc
+Architecture = aarch64
+DisableSandbox
+CheckSpace
+SigLevel    = Required DatabaseOptional
+LocalFileSigLevel = Optional
+
+[core]
+Server = http://mirror.archlinuxarm.org/$arch/$repo
+
+[extra]
+Server = http://mirror.archlinuxarm.org/$arch/$repo
+
+[alarm]
+Server = http://mirror.archlinuxarm.org/$arch/$repo
+
+[aur]
+Server = http://mirror.archlinuxarm.org/$arch/$repo
+EOF
+}
+
+bootstrap_alarm_root() {
+    log "Bootstrapping aarch64 root via pacstrap (Arch Linux ARM)..."
+    write_alarm_pacman_conf
+    setup_aarch64_chroot
+    sudo pacstrap -C "$PACMAN_ALARM_CONF" -K -c "$MNT" \
+        base archlinuxarm-keyring archlinux-keyring
 }
 
 build_binaries_on_host() {
@@ -156,7 +197,7 @@ if [[ "$NATIVE_BUILD" -eq 1 ]]; then
     build_binaries_on_host
 fi
 
-if [[ ! -f "$BOOTSTRAP" ]]; then
+if [[ "$USE_ALARM" -eq 0 && ! -f "$BOOTSTRAP" ]]; then
     log "Downloading Arch bootstrap ($ARCH)..."
     curl -fsSL -o "$BOOTSTRAP" \
         "https://geo.mirror.pkgbuild.com/iso/latest/archlinux-bootstrap-${ARCH}.tar.zst"
@@ -183,8 +224,12 @@ fi
 LOOP=$(findmnt -n -o SOURCE "$MNT" | sed 's/p[0-9]*$//')
 
 if [[ ! -f "$MNT/bin/bash" ]]; then
-    log "Extracting Arch bootstrap..."
-    sudo tar -xf "$BOOTSTRAP" -C "$MNT" --strip-components=1
+    if [[ "$USE_ALARM" -eq 1 ]]; then
+        bootstrap_alarm_root
+    else
+        log "Extracting Arch bootstrap..."
+        sudo tar -xf "$BOOTSTRAP" -C "$MNT" --strip-components=1
+    fi
 fi
 
 if [[ "$ARCH" == "aarch64" && "$HOST_ARCH" == "x86_64" ]]; then
@@ -192,7 +237,13 @@ if [[ "$ARCH" == "aarch64" && "$HOST_ARCH" == "x86_64" ]]; then
 fi
 
 log "Configuring pacman mirrors..."
-sudo sed -i 's/^#Server/Server/' "$MNT/etc/pacman.d/mirrorlist" 2>/dev/null || true
+if [[ "$USE_ALARM" -eq 1 ]]; then
+    write_alarm_pacman_conf
+    sudo cp -f "$PACMAN_ALARM_CONF" "$MNT/etc/pacman.conf"
+    sudo sed -i 's/^Architecture = auto/Architecture = aarch64/' "$MNT/etc/pacman.conf" 2>/dev/null || true
+else
+    sudo sed -i 's/^#Server/Server/' "$MNT/etc/pacman.d/mirrorlist" 2>/dev/null || true
+fi
 
 log "Chroot setup..."
 mount_if() { mountpoint -q "$2" || sudo mount "$@"; }
@@ -208,13 +259,16 @@ sudo sed -i 's/^#DisableSandbox.*/DisableSandbox/' "$MNT/etc/pacman.conf" 2>/dev
 grep -q '^DisableSandbox' "$MNT/etc/pacman.conf" || \
     sudo sed -i '/^\[options\]/a DisableSandbox' "$MNT/etc/pacman.conf"
 
-sudo arch-chroot "$MNT" env XORG_DRV="$XORG_DRV" /bin/bash -eux <<'CHROOT'
+sudo arch-chroot "$MNT" env XORG_DRV="$XORG_DRV" KERNEL_PKG="$KERNEL_PKG" VMLINUZ="$VMLINUZ" INITRD_IMG="$INITRD_IMG" USE_ALARM="$USE_ALARM" /bin/bash -eux <<'CHROOT'
 pacman-key --init
+if [[ "$USE_ALARM" == 1 ]]; then
+    pacman-key --populate archlinuxarm
+fi
 pacman-key --populate archlinux
 pacman -Sy --noconfirm
 
 pacman -S --noconfirm --needed \
-    linux linux-firmware \
+    "$KERNEL_PKG" linux-firmware \
     base base-devel python \
     xorg-server xorg-xinit xorg-xrandr "$XORG_DRV" \
     xterm dolphin feh fbida nettle xorg-fonts-misc libxft ttf-dejavu x11vnc unzip librsvg \
@@ -263,8 +317,8 @@ set default=0
 set timeout=2
 menuentry "Backroot 8" {
     set root=(hd0)
-    linux /boot/vmlinuz-linux root=LABEL=backroot8 rw quiet
-    initrd /boot/initramfs-linux.img
+    linux /boot/$VMLINUZ root=LABEL=backroot8 rw quiet
+    initrd /boot/$INITRD_IMG
 }
 GRUB
 pacman -Syu --noconfirm

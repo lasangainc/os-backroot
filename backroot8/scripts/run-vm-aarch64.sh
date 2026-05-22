@@ -26,8 +26,12 @@ if [[ ! -f "$KERNEL" ]] || [[ ! -f "$INITRD" ]]; then
     if ! mountpoint -q "$MNT"; then
         sudo mount -o loop,ro "$DISK" "$MNT"
     fi
-    sudo cp "$MNT/boot/vmlinuz-linux" "$KERNEL"
-    sudo cp "$MNT/boot/initramfs-linux.img" "$INITRD"
+    KSRC="$MNT/boot/vmlinuz-linux-aarch64"
+    IRD="$MNT/boot/initramfs-linux-aarch64.img"
+    [[ -f "$KSRC" ]] || KSRC="$MNT/boot/vmlinuz-linux"
+    [[ -f "$IRD" ]] || IRD="$MNT/boot/initramfs-linux.img"
+    sudo cp "$KSRC" "$KERNEL"
+    sudo cp "$IRD" "$INITRD"
     sudo chmod a+r "$KERNEL" "$INITRD"
     sudo chown "$(id -un):$(id -gn)" "$KERNEL" "$INITRD" 2>/dev/null || true
     mountpoint -q "$MNT" && sudo umount "$MNT"

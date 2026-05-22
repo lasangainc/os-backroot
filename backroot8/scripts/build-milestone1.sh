@@ -11,7 +11,7 @@ log() { echo "[milestone1] $*" | tee -a "$LOG"; }
 mkdir -p "$VM_DIR"
 : >"$LOG"
 
-log "Backroot 8 Milestone 1 — dual-arch disk image build"
+log "Backroot 8 Milestone 1 — dual-arch disk image build (x86_64: Arch, aarch64: Arch Linux ARM)"
 log "Host: $(uname -m) — $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 if [[ "$(uname -m)" == "x86_64" ]]; then
