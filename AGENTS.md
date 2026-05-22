@@ -48,6 +48,8 @@ All product code lives under **`backroot8/`**. Repo root is a thin pointer (`REA
 
 **Taskbar restore:** Panel sets `_BR8_ACTIVATE` on root **and** `XMapWindow`/`XMapSubwindows` on the frame. WM handles `PropertyNotify` on root. Do **not** rely on `ClientMessage` to root alone — it often does not reach the WM.
 
+**Metro Charms:** Pointer at the right screen edge (8px) opens a black strip with **Home** (start emblem) and **Close app**, plus a bottom-left clock overlay. Bottom swipe still returns to Start. Corner-to-home is removed.
+
 **Minimize / restore:** Never `add_client()` on an existing frame or chrome window — that caused stacked title bars. `is_our_chrome()` must use valid `XQueryTree` children pointers (never `NULL` for children).
 
 ## Directory map
