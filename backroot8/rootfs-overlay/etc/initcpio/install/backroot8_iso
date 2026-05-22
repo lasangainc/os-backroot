@@ -1,0 +1,11 @@
+#!/bin/bash
+build() {
+    add_module isofs
+    add_module squashfs
+    add_module loop
+    add_module ext4
+    add_runscript
+}
+help() {
+    echo 'Backroot 8 ISO live boot (backroot8iso kernel parameter)'
+}

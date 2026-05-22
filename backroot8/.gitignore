@@ -1,4 +1,8 @@
 vm/*.img
+vm/*.iso
+vm/iso-staging/
+vm/iso-boot-serial.log
+vm/iso-boot-qemu.log
 vm/*.tar.zst
 vm/mnt/
 vm/vmlinuz-linux
@@ -14,3 +18,7 @@ src/br8-wm/br8-wm
 src/br8-panel/br8-panel
 src/backroot-hello/backroot-hello
 src/power-pdf/powerpdf
+src/br8-start/br8-start
+*.exit
+vm/build*.log
+vm/*.zst

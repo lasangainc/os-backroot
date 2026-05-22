@@ -13,6 +13,19 @@ A minimal desktop environment built from scratch on **Arch Linux** with the prec
 - Default wallpaper at `/usr/share/backgrounds/backroot8.jpg` (via `feh`)
 - Arch precompiled kernel (`linux` package from official repos)
 
+## Milestone 1 ISO (bootable on real hardware)
+
+```bash
+# Build root filesystem (~6GB disk image) then hybrid BIOS+UEFI ISO
+sudo ./scripts/build-rootfs.sh
+sudo ./scripts/build-iso.sh
+
+# Verify ISO boots in QEMU (no kernel panic / root mount failure)
+./scripts/verify-iso-boot.sh
+```
+
+Artifact: `vm/backroot8-milestone1.iso` — write to USB with `dd`, or boot from DVD/USB in firmware.
+
 ## Quick start (VM)
 
 ```bash
