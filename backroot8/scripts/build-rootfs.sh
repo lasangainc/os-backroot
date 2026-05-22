@@ -80,6 +80,11 @@ sudo mkdir -p "$MNT/dev/pts"
 mount_if -t devpts devpts "$MNT/dev/pts"
 [[ -f /etc/resolv.conf ]] && sudo cp /etc/resolv.conf "$MNT/etc/resolv.conf"
 
+sudo install -Dm755 "$ROOT/rootfs-overlay/etc/initcpio/install/backroot8_iso" \
+    "$MNT/etc/initcpio/install/backroot8_iso"
+sudo install -Dm755 "$ROOT/rootfs-overlay/etc/initcpio/hooks/backroot8_iso" \
+    "$MNT/etc/initcpio/hooks/backroot8_iso"
+
 # Landlock sandbox fails in some container/chroot hosts
 sudo sed -i 's/^#DisableSandbox.*/DisableSandbox/' "$MNT/etc/pacman.conf" 2>/dev/null || true
 grep -q '^DisableSandbox' "$MNT/etc/pacman.conf" || \
@@ -135,9 +140,8 @@ ExecStart=
 ExecStart=-/usr/bin/agetty --autologin root --noclear %I $TERM
 AUTO
 
-# mkinitcpio and grub
-sed -i 's/^HOOKS=.*/HOOKS=(base udev modconf block filesystems fsck)/' /etc/mkinitcpio.conf
-mkinitcpio -P
+# mkinitcpio (hooks installed from host before chroot; image built after overlay)
+sed -i 's/^HOOKS=.*/HOOKS=(base udev modconf block backroot8_iso filesystems fsck)/' /etc/mkinitcpio.conf
 
 mkdir -p /boot/grub
 cat > /boot/grub/grub.cfg <<'GRUB'
@@ -152,6 +156,9 @@ GRUB
 # Sync all packages so terminals match current nettle/gnutls SONAMEs
 pacman -Syu --noconfirm
 CHROOT
+
+log "Regenerating initramfs with backroot8_iso hook..."
+sudo arch-chroot "$MNT" mkinitcpio -P
 
 log "Installing Backroot 8 desktop..."
 sudo install -Dm755 "$ROOT/src/br8-wm/br8-wm" "$MNT/usr/local/bin/br8-wm"
@@ -192,7 +199,6 @@ sudo install -Dm644 "$ROOT/rootfs-overlay/etc/systemd/system/backroot8-splash.se
     "$MNT/etc/systemd/system/backroot8-splash.service"
 sudo install -Dm644 "$ROOT/rootfs-overlay/etc/fonts/conf.d/99-segoe-ui.conf" \
     "$MNT/etc/fonts/conf.d/99-segoe-ui.conf"
-
 log "Installing Segoe UI font (Microsoft Segoe UI Variable)..."
 SEGOE_TMP="$(mktemp -d)"
 curl -fsSL -o "$SEGOE_TMP/segoe-ui-variable.zip" "https://aka.ms/SegoeUIVariable"

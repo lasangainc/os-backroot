@@ -62,14 +62,8 @@ while (( SECONDS < deadline )); do
         if grep -qE 'Kernel panic|VFS: Cannot open root device|Failed to mount|ALERT!.*failed' "$SERIAL_LOG"; then
             fail "boot error detected in serial log"
         fi
-        if grep -q 'Backroot 8 Milestone 1' "$SERIAL_LOG" 2>/dev/null || \
-           grep -qE 'Started backroot8-desktop|Reached target.*Graphical|login:' "$SERIAL_LOG"; then
-            ok=1
-            break
-        fi
-        if grep -q 'Welcome to Backroot' "$SERIAL_LOG" 2>/dev/null && \
-           grep -q 'systemd' "$SERIAL_LOG" && \
-           grep -qE 'backroot8-desktop|startx|Xorg' "$SERIAL_LOG"; then
+        if grep -qE 'backroot8_iso: root image on|backroot8 login:' "$SERIAL_LOG" 2>/dev/null && \
+           grep -q 'backroot8 login:' "$SERIAL_LOG"; then
             ok=1
             break
         fi

@@ -1,0 +1,57 @@
+#!/usr/bin/ash
+# Expose ISO embedded ext4 (inside squashfs) as loop device for root=LABEL=backroot8.
+
+run_hook() {
+    if ! grep -q 'backroot8iso' /proc/cmdline; then
+        return 0
+    fi
+
+    modprobe isofs 2>/dev/null
+    modprobe squashfs 2>/dev/null
+    modprobe loop 2>/dev/null
+
+    mnt=/run/backroot8iso
+    sqmnt=/run/br8/sq
+    mkdir -p "$mnt" "$sqmnt"
+
+    iso_dev=
+    for candidate in /dev/disk/by-label/BACKROOT8_M1 /dev/sr0 /dev/sr1; do
+        if [ ! -e "$candidate" ]; then
+            continue
+        fi
+        if mount -t iso9660 -o ro "$candidate" "$mnt" 2>/dev/null; then
+            if [ -f "$mnt/backroot8-root.squashfs" ]; then
+                iso_dev=$candidate
+                break
+            fi
+            umount "$mnt" 2>/dev/null
+        fi
+    done
+
+    if [ -z "$iso_dev" ]; then
+        echo "backroot8_iso: could not mount Backroot 8 ISO" >/dev/console
+        return 1
+    fi
+
+    if ! mount -t squashfs -o ro "$mnt/backroot8-root.squashfs" "$sqmnt"; then
+        echo "backroot8_iso: squashfs mount failed" >/dev/console
+        return 1
+    fi
+    umount "$mnt"
+
+    if [ ! -f "$sqmnt/backroot8-root.img" ]; then
+        echo "backroot8_iso: missing backroot8-root.img in squashfs" >/dev/console
+        return 1
+    fi
+
+    img_dev=$(losetup -f)
+    if [ -z "$img_dev" ]; then
+        echo "backroot8_iso: no free loop device" >/dev/console
+        return 1
+    fi
+    if ! losetup "$img_dev" "$sqmnt/backroot8-root.img"; then
+        echo "backroot8_iso: losetup failed" >/dev/console
+        return 1
+    fi
+    echo "backroot8_iso: root image on ${img_dev}" >/dev/console
+}
