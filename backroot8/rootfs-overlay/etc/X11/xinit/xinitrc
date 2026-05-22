@@ -10,7 +10,7 @@ WALLPAPER=/usr/share/backgrounds/backroot8.jpg
 # Loading splash on black until panel and wallpaper are up
 xsetroot -solid black
 if command -v feh >/dev/null && [ -r "$SPLASH" ]; then
-    feh --auto-zoom --fullscreen --borderless "$SPLASH" &
+    feh --fullscreen --scale-down --auto-zoom --image-bg black --borderless "$SPLASH" &
     SPLASH_PID=$!
 fi
 
