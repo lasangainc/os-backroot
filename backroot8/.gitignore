@@ -3,6 +3,12 @@ vm/*.tar.zst
 vm/mnt/
 vm/vmlinuz-linux
 vm/initramfs-linux.img
+vm/vmlinuz-linux-aarch64
+vm/initramfs-linux-aarch64.img
+vm/backroot8-x86_64.img
+vm/backroot8-aarch64.img
+vm/archlinux-bootstrap-x86_64.tar.zst
+vm/archlinux-bootstrap-aarch64.tar.zst
 vm/qemu.pid
 vm/websockify.pid
 vm/websockify.log

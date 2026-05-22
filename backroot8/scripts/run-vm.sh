@@ -3,7 +3,10 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-DISK="$ROOT/vm/backroot8.img"
+DISK="${DISK:-$ROOT/vm/backroot8.img}"
+if [[ ! -f "$DISK" && -f "$ROOT/vm/backroot8-x86_64.img" ]]; then
+    DISK="$ROOT/vm/backroot8-x86_64.img"
+fi
 MNT="$ROOT/vm/mnt"
 PIDFILE="$ROOT/vm/qemu.pid"
 VNC_DISPLAY="${VNC_DISPLAY:-:2}"
