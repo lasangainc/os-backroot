@@ -55,7 +55,21 @@ cleanup_mounts() {
 
 trap cleanup_mounts EXIT
 
+ensure_aarch64_binfmt() {
+    if [[ -f /proc/sys/fs/binfmt_misc/qemu-aarch64 ]]; then
+        return 0
+    fi
+    if [[ ! -f /proc/sys/fs/binfmt_misc/register ]]; then
+        sudo mount -t binfmt_misc binfmt_misc /proc/sys/fs/binfmt_misc 2>/dev/null || true
+    fi
+    if [[ -f /usr/lib/binfmt.d/qemu-aarch64.conf ]]; then
+        log "Registering qemu-aarch64 binfmt for cross-arch chroot..."
+        sudo sh -c 'cat /usr/lib/binfmt.d/qemu-aarch64.conf > /proc/sys/fs/binfmt_misc/register' 2>/dev/null || true
+    fi
+}
+
 setup_aarch64_chroot() {
+    ensure_aarch64_binfmt
     local qemu_static="/usr/bin/qemu-aarch64-static"
     if [[ ! -f "$qemu_static" ]]; then
         log "qemu-aarch64-static required for aarch64 chroot on $HOST_ARCH host"

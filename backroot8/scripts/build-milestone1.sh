@@ -18,7 +18,13 @@ if [[ "$(uname -m)" == "x86_64" ]]; then
     if ! command -v qemu-aarch64-static >/dev/null 2>&1; then
         log "Installing qemu-user-static for aarch64 chroot..."
         sudo apt-get update -qq
-        sudo apt-get install -y -qq qemu-user-static qemu-system-arm
+        sudo apt-get install -y -qq qemu-user-static qemu-system-arm binfmt-support
+    fi
+    if [[ ! -f /proc/sys/fs/binfmt_misc/qemu-aarch64 ]]; then
+        sudo mount -t binfmt_misc binfmt_misc /proc/sys/fs/binfmt_misc 2>/dev/null || true
+        if [[ -f /usr/lib/binfmt.d/qemu-aarch64.conf ]]; then
+            sudo sh -c 'cat /usr/lib/binfmt.d/qemu-aarch64.conf > /proc/sys/fs/binfmt_misc/register' 2>/dev/null || true
+        fi
     fi
 fi
 
