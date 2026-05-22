@@ -30,10 +30,6 @@
 #define CHARMS_TIME_PAD 20
 #define METRO_SWIPE_ZONE 56
 #define METRO_SWIPE_THRESHOLD 72
-#define METRO_CLOSE_MS 160.0
-#define METRO_ANIM_TICK_MS 16
-#define METRO_CLOSE_THUMB_MAX_W 400
-#define METRO_CLOSE_THUMB_MAX_H 300
 #define PANEL_H 32
 #define MENU_W 240
 #define MENU_ITEM_H 32
@@ -71,17 +67,6 @@ typedef struct {
     int metro;
 } Client;
 
-typedef struct {
-    int active;
-    double t0;
-    Window overlay;
-    Pixmap snap;
-    Pixmap thumb;
-    int sw, sh;
-    int thumb_w, thumb_h;
-    Client *c;
-} MetroCloseAnim;
-
 static Display *dpy;
 static int screen;
 static Window root;
@@ -94,7 +79,6 @@ static Atom wm_protocols, wm_delete;
 static Atom net_wm_name, net_client_list, utf8_string;
 static Atom br8_frame, br8_client, br8_panel_rev, br8_activate;
 static Atom br8_metro, br8_start_open, br8_metro_active;
-static MetroCloseAnim metro_close;
 static void unmap_client(Client *c);
 static void remove_client(Client *c);
 static void close_client(Client *c);
@@ -754,21 +738,6 @@ static void create_crash_windows(void) {
     crash_drawer_open = 0;
 }
 
-static double now_ms(void) {
-    struct timeval tv;
-    gettimeofday(&tv, NULL);
-    return tv.tv_sec * 1000.0 + tv.tv_usec / 1000.0;
-}
-
-static double ease_out_cubic(double t) {
-    if (t <= 0.0)
-        return 0.0;
-    if (t >= 1.0)
-        return 1.0;
-    double u = 1.0 - t;
-    return 1.0 - u * u * u;
-}
-
 static int client_has_metro_flag(Window w) {
     Atom actual;
     int fmt;
@@ -1098,182 +1067,6 @@ static void hide_metro_chrome(Client *c) {
     XUnmapWindow(dpy, c->resize_grip);
 }
 
-static void metro_send_delete(Client *c) {
-    XEvent ev;
-    memset(&ev, 0, sizeof(ev));
-    ev.xclient.type = ClientMessage;
-    ev.xclient.window = c->client;
-    ev.xclient.message_type = wm_protocols;
-    ev.xclient.format = 32;
-    ev.xclient.data.l[0] = wm_delete;
-    XSendEvent(dpy, c->client, False, NoEventMask, &ev);
-}
-
-static void metro_close_build_thumb(XImage *img, int sw, int sh) {
-    int tw = sw;
-    int th = sh;
-
-    if (tw > METRO_CLOSE_THUMB_MAX_W) {
-        th = th * METRO_CLOSE_THUMB_MAX_W / tw;
-        tw = METRO_CLOSE_THUMB_MAX_W;
-    }
-    if (th > METRO_CLOSE_THUMB_MAX_H) {
-        tw = tw * METRO_CLOSE_THUMB_MAX_H / th;
-        th = METRO_CLOSE_THUMB_MAX_H;
-    }
-    if (tw < 1)
-        tw = 1;
-    if (th < 1)
-        th = 1;
-
-    metro_close.thumb_w = tw;
-    metro_close.thumb_h = th;
-    metro_close.thumb = XCreatePixmap(dpy, root, tw, th, DefaultDepth(dpy, screen));
-
-    XImage *out = XCreateImage(dpy, visual, img->depth, ZPixmap, 0, NULL,
-        (unsigned int)tw, (unsigned int)th, 32, 0);
-    if (!out)
-        return;
-    out->data = calloc((size_t)out->bytes_per_line * (unsigned int)th, 1);
-    if (!out->data) {
-        XDestroyImage(out);
-        return;
-    }
-
-    for (int y = 0; y < th; y++) {
-        int sy = y * sh / th;
-        if (sy >= sh)
-            sy = sh - 1;
-        for (int x = 0; x < tw; x++) {
-            int sx = x * sw / tw;
-            if (sx >= sw)
-                sx = sw - 1;
-            XPutPixel(out, x, y, XGetPixel(img, sx, sy));
-        }
-    }
-
-    GC gc = XCreateGC(dpy, metro_close.thumb, 0, NULL);
-    XPutImage(dpy, metro_close.thumb, gc, out, 0, 0, 0, 0, tw, th);
-    XFreeGC(dpy, gc);
-    XDestroyImage(out);
-}
-
-static void metro_close_blit_scaled(GC gc, int dw, int dh, int dx, int dy) {
-    int tw = metro_close.thumb_w;
-    int th = metro_close.thumb_h;
-    if (!metro_close.thumb || tw < 1 || th < 1 || dw < 1 || dh < 1)
-        return;
-
-    XSetGraphicsExposures(dpy, gc, False);
-    for (int x = 0; x < dw; x++) {
-        int sx = x * tw / dw;
-        if (sx >= tw)
-            sx = tw - 1;
-        XCopyArea(dpy, metro_close.thumb, metro_close.snap, gc,
-            sx, 0, 1, th, dx + x, dy);
-    }
-    for (int y = 0; y < dh; y++) {
-        int sy = y * th / dh;
-        if (sy >= th)
-            sy = th - 1;
-        XCopyArea(dpy, metro_close.snap, metro_close.snap, gc,
-            dx, dy + sy, dw, 1, dx, dy + y);
-    }
-}
-
-static void metro_close_finish(void) {
-    Client *c = metro_close.c;
-    if (metro_close.thumb) {
-        XFreePixmap(dpy, metro_close.thumb);
-        metro_close.thumb = 0;
-    }
-    if (metro_close.snap) {
-        XFreePixmap(dpy, metro_close.snap);
-        metro_close.snap = 0;
-    }
-    if (metro_close.overlay) {
-        XDestroyWindow(dpy, metro_close.overlay);
-        metro_close.overlay = 0;
-    }
-    metro_close.active = 0;
-    metro_close.c = NULL;
-    if (c)
-        remove_client(c);
-    update_metro_root_state();
-}
-
-static void metro_close_tick(void) {
-    if (!metro_close.active || !metro_close.thumb)
-        return;
-
-    double elapsed = now_ms() - metro_close.t0;
-    double t = elapsed / METRO_CLOSE_MS;
-    if (t >= 1.0) {
-        metro_close_finish();
-        return;
-    }
-
-    double e = ease_out_cubic(t);
-    double scale = 1.0 - e * 0.28;
-    int dw = (int)(metro_close.sw * scale);
-    int dh = (int)(metro_close.sh * scale);
-    if (dw < 24)
-        dw = 24;
-    if (dh < 24)
-        dh = 24;
-    int dx = (root_w - dw) / 2;
-    int dy = (root_h - dh) / 2;
-
-    GC gc = XCreateGC(dpy, metro_close.snap, 0, NULL);
-    XSetForeground(dpy, gc, rgb(30, 32, 42));
-    XFillRectangle(dpy, metro_close.snap, gc, 0, 0, root_w, root_h);
-    metro_close_blit_scaled(gc, dw, dh, dx, dy);
-    if (e > 0.05) {
-        int dim = (int)(e * 180.0);
-        if (dim > 220)
-            dim = 220;
-        XSetForeground(dpy, gc, rgb(30 + dim / 3, 32 + dim / 3, 42 + dim / 3));
-        XFillRectangle(dpy, metro_close.snap, gc, 0, 0, root_w, root_h);
-        metro_close_blit_scaled(gc, dw, dh, dx, dy);
-    }
-    XCopyArea(dpy, metro_close.snap, metro_close.overlay, gc, 0, 0, root_w, root_h, 0, 0);
-    XFreeGC(dpy, gc);
-    XFlush(dpy);
-}
-
-static int metro_close_begin(Client *c) {
-    if (!c || !c->metro || metro_close.active)
-        return 0;
-
-    XImage *img = XGetImage(dpy, c->frame, 0, 0, c->w, c->h, AllPlanes, ZPixmap);
-    if (!img)
-        return 0;
-
-    metro_send_delete(c);
-    XUnmapWindow(dpy, c->frame);
-
-    metro_close_build_thumb(img, c->w, c->h);
-    XDestroyImage(img);
-    if (!metro_close.thumb)
-        return 0;
-
-    XSetWindowAttributes attr;
-    attr.override_redirect = True;
-    attr.event_mask = ExposureMask;
-    metro_close.overlay = XCreateSimpleWindow(dpy, root, 0, 0, root_w, root_h, 0, 0, 0);
-    XChangeWindowAttributes(dpy, metro_close.overlay, CWOverrideRedirect | CWEventMask, &attr);
-    metro_close.snap = XCreatePixmap(dpy, root, root_w, root_h, DefaultDepth(dpy, screen));
-    metro_close.sw = c->w;
-    metro_close.sh = c->h;
-    metro_close.c = c;
-    metro_close.t0 = now_ms();
-    metro_close.active = 1;
-
-    XMapRaised(dpy, metro_close.overlay);
-    metro_close_tick();
-    return 1;
-}
-
 static void handle_crash_button(XButtonEvent *btn) {
     if (btn->window == crash_bar) {
         if (crash_bar_click((int)btn->y))
@@ -1338,7 +1131,7 @@ static void unmap_client(Client *c) {
 }
 
 static void close_client(Client *c) {
-    if (c->metro && metro_close_begin(c))
+    if (!c)
         return;
     XEvent ev;
     memset(&ev, 0, sizeof(ev));
@@ -1348,6 +1141,9 @@ static void close_client(Client *c) {
     ev.xclient.format = 32;
     ev.xclient.data.l[0] = wm_delete;
     XSendEvent(dpy, c->client, False, NoEventMask, &ev);
+    XFlush(dpy);
+    if (c->metro)
+        remove_client(c);
 }
 
 static void maximize_client(Client *c) {
@@ -1498,8 +1294,6 @@ static void remove_client(Client *c) {
     int idx = c - clients;
     if (idx < 0 || idx >= nclients)
         return;
-    if (metro_close.active && metro_close.c == c)
-        return;
     XDestroyWindow(dpy, c->frame);
     memmove(&clients[idx], &clients[idx + 1], (nclients - idx - 1) * sizeof(Client));
     nclients--;
@@ -1599,35 +1393,8 @@ static void handle_client_message(XClientMessageEvent *e) {
 static void handle_destroy(XDestroyWindowEvent *e) {
     if (e->window == menu_win)
         return;
-    if (metro_close.active && metro_close.overlay == e->window)
-        return;
     for (int i = 0; i < nclients; i++) {
-        if (clients[i].client == e->window) {
-            if (metro_close.active && metro_close.c == &clients[i]) {
-                metro_close.c = NULL;
-                metro_close.active = 0;
-                if (metro_close.thumb) {
-                    XFreePixmap(dpy, metro_close.thumb);
-                    metro_close.thumb = 0;
-                }
-                if (metro_close.snap) {
-                    XFreePixmap(dpy, metro_close.snap);
-                    metro_close.snap = 0;
-                }
-                if (metro_close.overlay) {
-                    XDestroyWindow(dpy, metro_close.overlay);
-                    metro_close.overlay = 0;
-                }
-            }
-            remove_client(&clients[i]);
-            update_metro_root_state();
-            return;
-        }
-        if (clients[i].frame == e->window) {
-            if (metro_close.active && metro_close.c == &clients[i]) {
-                metro_close_finish();
-                return;
-            }
+        if (clients[i].client == e->window || clients[i].frame == e->window) {
             remove_client(&clients[i]);
             return;
         }
@@ -1713,14 +1480,10 @@ int main(void) {
         poll_panel_crash();
 
         if (!XPending(dpy)) {
-            if (metro_close.active)
-                metro_close_tick();
             if (charms_visible)
                 charms_tick_clock();
             struct timeval tv = { .tv_sec = 0, .tv_usec = 250000 };
-            if (metro_close.active)
-                tv.tv_usec = METRO_ANIM_TICK_MS * 1000;
-            else if (charms_visible)
+            if (charms_visible)
                 tv.tv_usec = 500000;
             int xfd = ConnectionNumber(dpy);
             fd_set fds;
@@ -1728,8 +1491,6 @@ int main(void) {
             FD_SET(xfd, &fds);
             select(xfd + 1, &fds, NULL, NULL, &tv);
             poll_panel_crash();
-            if (metro_close.active)
-                metro_close_tick();
             if (charms_visible)
                 charms_tick_clock();
         }
