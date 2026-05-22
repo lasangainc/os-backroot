@@ -11,31 +11,23 @@ log() { echo "[milestone1] $*" | tee -a "$LOG"; }
 mkdir -p "$VM_DIR"
 : >"$LOG"
 
-log "Backroot 8 Milestone 1 — dual-arch disk image build (x86_64: Arch, aarch64: Arch Linux ARM)"
+log "Backroot 8 Milestone 1 — x86_64 disk image + bootable ISO"
 log "Host: $(uname -m) — $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
-if [[ "$(uname -m)" == "x86_64" ]]; then
-    if ! command -v qemu-aarch64-static >/dev/null 2>&1; then
-        log "Installing qemu-user-static for aarch64 chroot..."
-        sudo apt-get update -qq
-        sudo apt-get install -y -qq qemu-user-static qemu-system-arm binfmt-support
-    fi
-    if [[ ! -f /proc/sys/fs/binfmt_misc/qemu-aarch64 ]]; then
-        sudo mount -t binfmt_misc binfmt_misc /proc/sys/fs/binfmt_misc 2>/dev/null || true
-        if [[ -f /usr/lib/binfmt.d/qemu-aarch64.conf ]]; then
-            sudo sh -c 'cat /usr/lib/binfmt.d/qemu-aarch64.conf > /proc/sys/fs/binfmt_misc/register' 2>/dev/null || true
-        fi
-    fi
+if ! command -v mksquashfs >/dev/null 2>&1; then
+    log "Installing ISO build tools..."
+    sudo apt-get update -qq
+    sudo apt-get install -y -qq squashfs-tools xorriso grub-pc-bin grub-efi-amd64-bin mtools
 fi
 
 log "=== x86_64 rootfs ==="
 BACKROOT8_ARCH=x86_64 sudo -E "$ROOT/scripts/build-rootfs.sh" 2>&1 | tee -a "$LOG"
 
-log "=== aarch64 rootfs ==="
-BACKROOT8_ARCH=aarch64 sudo -E "$ROOT/scripts/build-rootfs.sh" 2>&1 | tee -a "$LOG"
+log "=== x86_64 bootable ISO ==="
+sudo -E "$ROOT/scripts/build-iso.sh" 2>&1 | tee -a "$LOG"
 
 ln -sfn backroot8-x86_64.img "$VM_DIR/backroot8.img"
 
 log "Milestone 1 images:"
 ls -lh "$VM_DIR"/backroot8-x86_64.img "$VM_DIR"/backroot8-aarch64.img "$VM_DIR"/backroot8.img 2>&1 | tee -a "$LOG"
-log "Done. x86 VM: ./scripts/run-vm-gui.sh  |  aarch64: ./scripts/run-vm-aarch64.sh"
+log "Done. ISO: $VM_DIR/backroot8-x86_64.iso  |  disk VM: ./scripts/run-vm-gui.sh"

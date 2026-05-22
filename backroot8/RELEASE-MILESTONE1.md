@@ -25,7 +25,21 @@ chmod +x scripts/restore-milestone1-image.sh
 
 Requires `zstd` and ~6 GiB free under `vm/`.
 
-## Run in QEMU
+## Bootable ISO (UTM / physical / any VM)
+
+Build a **~1.4 GB** live ISO from the disk image:
+
+```bash
+cd backroot8
+sudo ./scripts/build-iso.sh
+```
+
+Output: `vm/backroot8-x86_64.iso`
+
+**UTM:** Create VM → mount **CD/DVD** → select `backroot8-x86_64.iso` → **Legacy BIOS** (UEFI off) → boot from CD.  
+At GRUB, pick **Backroot 8 Milestone 1 (live)**. Login: `root` / `backroot8`.
+
+## Run disk image in QEMU (cloud script)
 
 ```bash
 ./scripts/run-vm-gui.sh
