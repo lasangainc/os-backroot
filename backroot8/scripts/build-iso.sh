@@ -34,8 +34,11 @@ log "Staging ISO contents (${VERSION_TAG})..."
 rm -rf "$ISO_STAGING" "$ROOT_IMG"
 mkdir -p "$ISO_STAGING/boot/grub" "$MNT"
 if ! mountpoint -q "$MNT"; then
-    sudo mount -o loop,ro "$DISK" "$MNT"
+    sudo mount -o loop,rw "$DISK" "$MNT"
 fi
+
+log "Trimming caches to keep ISO under GitHub's 2 GiB asset limit..."
+sudo rm -rf "$MNT/var/cache/pacman/pkg"/* "$MNT/usr/share/doc"/* "$MNT/usr/share/man"/* 2>/dev/null || true
 
 cp "$MNT/boot/vmlinuz-linux" "$ISO_STAGING/boot/vmlinuz-linux"
 cp "$MNT/boot/initramfs-linux.img" "$ISO_STAGING/boot/initramfs-linux.img"

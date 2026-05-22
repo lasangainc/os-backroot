@@ -4,7 +4,7 @@ Bootable hybrid ISO for BIOS and UEFI systems.
 
 ## Download
 
-See GitHub Releases: **backroot8-milestone1.iso** (~2.4 GB).
+See GitHub Releases: **backroot8-milestone1.iso** (~1.4 GB).
 
 ## Write to USB
 
