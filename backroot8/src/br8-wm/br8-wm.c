@@ -30,8 +30,10 @@
 #define CHARMS_TIME_PAD 20
 #define METRO_SWIPE_ZONE 56
 #define METRO_SWIPE_THRESHOLD 72
-#define METRO_CLOSE_MS 180.0
-#define METRO_ANIM_TICK_MS 8
+#define METRO_CLOSE_MS 160.0
+#define METRO_ANIM_TICK_MS 16
+#define METRO_CLOSE_THUMB_MAX_W 400
+#define METRO_CLOSE_THUMB_MAX_H 300
 #define PANEL_H 32
 #define MENU_W 240
 #define MENU_ITEM_H 32
@@ -74,8 +76,9 @@ typedef struct {
     double t0;
     Window overlay;
     Pixmap snap;
-    XImage *img;
+    Pixmap thumb;
     int sw, sh;
+    int thumb_w, thumb_h;
     Client *c;
 } MetroCloseAnim;
 
@@ -1095,58 +1098,94 @@ static void hide_metro_chrome(Client *c) {
     XUnmapWindow(dpy, c->resize_grip);
 }
 
-static void scale_snap_draw(Pixmap dst, GC gc, XImage *src, int sw, int sh,
-    int dw, int dh, int dx, int dy, double alpha) {
-    unsigned long bg = rgb(30, 32, 42);
-    int bg_r = 30, bg_g = 32, bg_b = 42;
+static void metro_send_delete(Client *c) {
+    XEvent ev;
+    memset(&ev, 0, sizeof(ev));
+    ev.xclient.type = ClientMessage;
+    ev.xclient.window = c->client;
+    ev.xclient.message_type = wm_protocols;
+    ev.xclient.format = 32;
+    ev.xclient.data.l[0] = wm_delete;
+    XSendEvent(dpy, c->client, False, NoEventMask, &ev);
+}
 
-    XSetForeground(dpy, gc, bg);
-    XFillRectangle(dpy, dst, gc, dx, dy, dw, dh);
+static void metro_close_build_thumb(XImage *img, int sw, int sh) {
+    int tw = sw;
+    int th = sh;
 
-    if (!src || sw < 1 || sh < 1 || dw < 1 || dh < 1)
-        return;
+    if (tw > METRO_CLOSE_THUMB_MAX_W) {
+        th = th * METRO_CLOSE_THUMB_MAX_W / tw;
+        tw = METRO_CLOSE_THUMB_MAX_W;
+    }
+    if (th > METRO_CLOSE_THUMB_MAX_H) {
+        tw = tw * METRO_CLOSE_THUMB_MAX_H / th;
+        th = METRO_CLOSE_THUMB_MAX_H;
+    }
+    if (tw < 1)
+        tw = 1;
+    if (th < 1)
+        th = 1;
 
-    float xscale = (float)sw / (float)dw;
-    float yscale = (float)sh / (float)dh;
-    XImage *out = XCreateImage(dpy, DefaultVisual(dpy, screen), src->depth,
-        ZPixmap, 0, NULL, (unsigned int)dw, (unsigned int)dh, 32, 0);
+    metro_close.thumb_w = tw;
+    metro_close.thumb_h = th;
+    metro_close.thumb = XCreatePixmap(dpy, root, tw, th, DefaultDepth(dpy, screen));
+
+    XImage *out = XCreateImage(dpy, visual, img->depth, ZPixmap, 0, NULL,
+        (unsigned int)tw, (unsigned int)th, 32, 0);
     if (!out)
         return;
-    out->data = malloc((size_t)dw * (size_t)dh * 4);
+    out->data = calloc((size_t)out->bytes_per_line * (unsigned int)th, 1);
     if (!out->data) {
         XDestroyImage(out);
         return;
     }
 
-    for (int y = 0; y < dh; y++) {
-        int sy = (int)(y * yscale);
+    for (int y = 0; y < th; y++) {
+        int sy = y * sh / th;
         if (sy >= sh)
             sy = sh - 1;
-        for (int x = 0; x < dw; x++) {
-            int sx = (int)(x * xscale);
+        for (int x = 0; x < tw; x++) {
+            int sx = x * sw / tw;
             if (sx >= sw)
                 sx = sw - 1;
-            unsigned long px = XGetPixel(src, sx, sy);
-            int pr = (int)((px >> 16) & 0xff);
-            int pg = (int)((px >> 8) & 0xff);
-            int pb = (int)(px & 0xff);
-            int a = (int)(alpha * 255.0);
-            int r = (pr * a + bg_r * (255 - a)) / 255;
-            int g = (pg * a + bg_g * (255 - a)) / 255;
-            int b = (pb * a + bg_b * (255 - a)) / 255;
-            XPutPixel(out, x, y, (unsigned long)((r << 16) | (g << 8) | b));
+            XPutPixel(out, x, y, XGetPixel(img, sx, sy));
         }
     }
-    XPutImage(dpy, dst, gc, out, 0, 0, dx, dy, dw, dh);
-    free(out->data);
+
+    GC gc = XCreateGC(dpy, metro_close.thumb, 0, NULL);
+    XPutImage(dpy, metro_close.thumb, gc, out, 0, 0, 0, 0, tw, th);
+    XFreeGC(dpy, gc);
     XDestroyImage(out);
+}
+
+static void metro_close_blit_scaled(GC gc, int dw, int dh, int dx, int dy) {
+    int tw = metro_close.thumb_w;
+    int th = metro_close.thumb_h;
+    if (!metro_close.thumb || tw < 1 || th < 1 || dw < 1 || dh < 1)
+        return;
+
+    XSetGraphicsExposures(dpy, gc, False);
+    for (int x = 0; x < dw; x++) {
+        int sx = x * tw / dw;
+        if (sx >= tw)
+            sx = tw - 1;
+        XCopyArea(dpy, metro_close.thumb, metro_close.snap, gc,
+            sx, 0, 1, th, dx + x, dy);
+    }
+    for (int y = 0; y < dh; y++) {
+        int sy = y * th / dh;
+        if (sy >= th)
+            sy = th - 1;
+        XCopyArea(dpy, metro_close.snap, metro_close.snap, gc,
+            dx, dy + sy, dw, 1, dx, dy + y);
+    }
 }
 
 static void metro_close_finish(void) {
     Client *c = metro_close.c;
-    if (metro_close.img) {
-        XDestroyImage(metro_close.img);
-        metro_close.img = NULL;
+    if (metro_close.thumb) {
+        XFreePixmap(dpy, metro_close.thumb);
+        metro_close.thumb = 0;
     }
     if (metro_close.snap) {
         XFreePixmap(dpy, metro_close.snap);
@@ -1164,7 +1203,7 @@ static void metro_close_finish(void) {
 }
 
 static void metro_close_tick(void) {
-    if (!metro_close.active || !metro_close.img)
+    if (!metro_close.active || !metro_close.thumb)
         return;
 
     double elapsed = now_ms() - metro_close.t0;
@@ -1175,22 +1214,28 @@ static void metro_close_tick(void) {
     }
 
     double e = ease_out_cubic(t);
-    double scale = 1.0 - e * 0.22;
-    double alpha = 1.0 - e;
+    double scale = 1.0 - e * 0.28;
     int dw = (int)(metro_close.sw * scale);
     int dh = (int)(metro_close.sh * scale);
-    if (dw < 32)
-        dw = 32;
-    if (dh < 32)
-        dh = 32;
+    if (dw < 24)
+        dw = 24;
+    if (dh < 24)
+        dh = 24;
     int dx = (root_w - dw) / 2;
     int dy = (root_h - dh) / 2;
 
     GC gc = XCreateGC(dpy, metro_close.snap, 0, NULL);
     XSetForeground(dpy, gc, rgb(30, 32, 42));
     XFillRectangle(dpy, metro_close.snap, gc, 0, 0, root_w, root_h);
-    scale_snap_draw(metro_close.snap, gc, metro_close.img, metro_close.sw, metro_close.sh,
-        dw, dh, dx, dy, alpha);
+    metro_close_blit_scaled(gc, dw, dh, dx, dy);
+    if (e > 0.05) {
+        int dim = (int)(e * 180.0);
+        if (dim > 220)
+            dim = 220;
+        XSetForeground(dpy, gc, rgb(30 + dim / 3, 32 + dim / 3, 42 + dim / 3));
+        XFillRectangle(dpy, metro_close.snap, gc, 0, 0, root_w, root_h);
+        metro_close_blit_scaled(gc, dw, dh, dx, dy);
+    }
     XCopyArea(dpy, metro_close.snap, metro_close.overlay, gc, 0, 0, root_w, root_h, 0, 0);
     XFreeGC(dpy, gc);
     XFlush(dpy);
@@ -1204,7 +1249,13 @@ static int metro_close_begin(Client *c) {
     if (!img)
         return 0;
 
+    metro_send_delete(c);
     XUnmapWindow(dpy, c->frame);
+
+    metro_close_build_thumb(img, c->w, c->h);
+    XDestroyImage(img);
+    if (!metro_close.thumb)
+        return 0;
 
     XSetWindowAttributes attr;
     attr.override_redirect = True;
@@ -1212,7 +1263,6 @@ static int metro_close_begin(Client *c) {
     metro_close.overlay = XCreateSimpleWindow(dpy, root, 0, 0, root_w, root_h, 0, 0, 0);
     XChangeWindowAttributes(dpy, metro_close.overlay, CWOverrideRedirect | CWEventMask, &attr);
     metro_close.snap = XCreatePixmap(dpy, root, root_w, root_h, DefaultDepth(dpy, screen));
-    metro_close.img = img;
     metro_close.sw = c->w;
     metro_close.sh = c->h;
     metro_close.c = c;
@@ -1554,10 +1604,23 @@ static void handle_destroy(XDestroyWindowEvent *e) {
     for (int i = 0; i < nclients; i++) {
         if (clients[i].client == e->window) {
             if (metro_close.active && metro_close.c == &clients[i]) {
-                metro_close_finish();
-                return;
+                metro_close.c = NULL;
+                metro_close.active = 0;
+                if (metro_close.thumb) {
+                    XFreePixmap(dpy, metro_close.thumb);
+                    metro_close.thumb = 0;
+                }
+                if (metro_close.snap) {
+                    XFreePixmap(dpy, metro_close.snap);
+                    metro_close.snap = 0;
+                }
+                if (metro_close.overlay) {
+                    XDestroyWindow(dpy, metro_close.overlay);
+                    metro_close.overlay = 0;
+                }
             }
             remove_client(&clients[i]);
+            update_metro_root_state();
             return;
         }
         if (clients[i].frame == e->window) {
