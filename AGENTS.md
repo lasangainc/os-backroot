@@ -41,9 +41,14 @@ All product code lives under **`backroot8/`**. Repo root is a thin pointer (`REA
 | `_BR8_CLIENT` | WM on frame | Client window ID (WINDOW) |
 | `_BR8_PANEL_REV` | WM on root | Increment to refresh taskbar |
 | `_BR8_ACTIVATE` | Panel on root | WINDOW = frame to restore (delete after read) |
+| `_BR8_METRO` | App on client | CARDINAL `1` — metro fullscreen app (no chrome) |
+| `_BR8_METRO_ACTIVE` | WM on root | CARDINAL `1` while any metro app is mapped (hides panel) |
+| `_BR8_START_OPEN` | Panel / br8-start | CARDINAL `0/1` — start menu visible |
 | `_NET_CLIENT_LIST` | WM on root | EWMH client list |
 
 **Taskbar restore:** Panel sets `_BR8_ACTIVATE` on root **and** `XMapWindow`/`XMapSubwindows` on the frame. WM handles `PropertyNotify` on root. Do **not** rely on `ClientMessage` to root alone — it often does not reach the WM.
+
+**Metro Charms:** Pointer at the right screen edge (8px) opens a black strip with **Home** (start emblem) and **Close app**, plus a bottom-left clock overlay. Bottom swipe still returns to Start. Corner-to-home is removed.
 
 **Minimize / restore:** Never `add_client()` on an existing frame or chrome window — that caused stacked title bars. `is_our_chrome()` must use valid `XQueryTree` children pointers (never `NULL` for children).
 
@@ -73,9 +78,10 @@ backroot8/
 ```bash
 make -C backroot8/src/br8-wm
 make -C backroot8/src/br8-panel
+make -C backroot8/src/power-pdf
 ```
 
-Requires: `gcc`, `libx11-dev`, `pkg-config`.
+Requires: `gcc`, `libx11-dev`, `libxft-dev`, `pkg-config`. PowerPDF also needs `poppler-glib` and `cairo`.
 
 ### Full disk image (first time / package changes)
 

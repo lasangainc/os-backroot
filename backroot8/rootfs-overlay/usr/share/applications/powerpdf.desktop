@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=PowerPDF
+Comment=Metro PDF reader
+Exec=/usr/local/bin/powerpdf
+Icon=application-pdf
+Terminal=false
+Type=Application
+Categories=Office;Viewer;
+StartupNotify=true

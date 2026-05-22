@@ -14,9 +14,22 @@
 #include <signal.h>
 #include <sys/stat.h>
 #include <sys/select.h>
+#include <sys/time.h>
+#include <time.h>
 #include <ctype.h>
 
+#include "../br8-panel/emblem.h"
+
 #define TITLE_H 30
+#define CHARMS_EDGE_ZONE 8
+#define CHARMS_STRIP_W 76
+#define CHARMS_BTN_H 92
+#define CHARMS_EMBLEM_SZ 36
+#define CHARMS_TIME_W 320
+#define CHARMS_TIME_H 108
+#define CHARMS_TIME_PAD 20
+#define METRO_SWIPE_ZONE 56
+#define METRO_SWIPE_THRESHOLD 72
 #define PANEL_H 32
 #define MENU_W 240
 #define MENU_ITEM_H 32
@@ -51,6 +64,7 @@ typedef struct {
     int mapped;
     int maximized;
     int saved_x, saved_y, saved_w, saved_h;
+    int metro;
 } Client;
 
 static Display *dpy;
@@ -64,6 +78,21 @@ static GC gc_title, gc_btn, gc_close_fill, gc_close_x;
 static Atom wm_protocols, wm_delete;
 static Atom net_wm_name, net_client_list, utf8_string;
 static Atom br8_frame, br8_client, br8_panel_rev, br8_activate;
+static Atom br8_metro, br8_start_open, br8_metro_active;
+static void unmap_client(Client *c);
+static void remove_client(Client *c);
+static void close_client(Client *c);
+static void charms_hide(void);
+static int metro_swipe;
+static int metro_swipe_y;
+static Window charms_strip, charms_clock;
+static int charms_visible;
+static int charms_hover;
+static Pixmap charms_emblem_pm;
+static int charms_emblem_ready;
+static XftFont *charms_time_font;
+static XftFont *charms_date_font;
+static time_t charms_clock_last;
 static Atom net_wm_window_type, net_wm_window_type_desktop;
 static Client clients[256];
 static int nclients;
@@ -709,6 +738,335 @@ static void create_crash_windows(void) {
     crash_drawer_open = 0;
 }
 
+static int client_has_metro_flag(Window w) {
+    Atom actual;
+    int fmt;
+    unsigned long n, bytes;
+    unsigned long *data = NULL;
+    int metro = 0;
+
+    if (XGetWindowProperty(dpy, w, br8_metro, 0, 1, False, XA_CARDINAL,
+            &actual, &fmt, &n, &bytes, (unsigned char **)&data) == Success &&
+        data && n > 0 && data[0])
+        metro = 1;
+    if (data)
+        XFree(data);
+    return metro;
+}
+
+static void update_metro_root_state(void) {
+    int any = 0;
+    for (int i = 0; i < nclients; i++) {
+        if (clients[i].metro && clients[i].mapped) {
+            any = 1;
+            break;
+        }
+    }
+    unsigned long v = any ? 1 : 0;
+    XChangeProperty(dpy, root, br8_metro_active, XA_CARDINAL, 32, PropModeReplace,
+        (unsigned char *)&v, 1);
+    if (!any)
+        charms_hide();
+}
+
+static void open_start_menu(void) {
+    unsigned long one = 1;
+    XChangeProperty(dpy, root, br8_start_open, XA_CARDINAL, 32, PropModeReplace,
+        (unsigned char *)&one, 1);
+}
+
+static Client *top_metro_client(void) {
+    Client *best = NULL;
+    for (int i = 0; i < nclients; i++) {
+        if (!clients[i].metro || !clients[i].mapped)
+            continue;
+        if (!best)
+            best = &clients[i];
+        else
+            best = &clients[i];
+    }
+    return best;
+}
+
+static void metro_return_to_start(Client *c) {
+    if (!c || !c->metro)
+        return;
+    unmap_client(c);
+    open_start_menu();
+}
+
+static void charms_emblem_init(void) {
+    int disp = CHARMS_EMBLEM_SZ;
+    int depth = DefaultDepth(dpy, screen);
+    charms_emblem_pm = XCreatePixmap(dpy, root, disp, disp, depth);
+    XImage *xi = XCreateImage(dpy, visual, depth, ZPixmap, 0, NULL, disp, disp, 32, 0);
+    if (!xi)
+        return;
+    xi->data = calloc((size_t)xi->bytes_per_line * (unsigned int)disp, 1);
+    if (!xi->data) {
+        XDestroyImage(xi);
+        return;
+    }
+    for (int dy = 0; dy < disp; dy++) {
+        for (int dx = 0; dx < disp; dx++) {
+            int sx = dx * EMBLEM_W / disp;
+            int sy = dy * EMBLEM_H / disp;
+            size_t idx = (size_t)(sy * EMBLEM_W + sx) * 3;
+            XColor c;
+            c.red = (unsigned short)(emblem_rgb[idx] << 8);
+            c.green = (unsigned short)(emblem_rgb[idx + 1] << 8);
+            c.blue = (unsigned short)(emblem_rgb[idx + 2] << 8);
+            c.flags = DoRed | DoGreen | DoBlue;
+            if (!XAllocColor(dpy, cmap, &c))
+                c.pixel = BlackPixel(dpy, screen);
+            XPutPixel(xi, dx, dy, c.pixel);
+        }
+    }
+    GC egc = XCreateGC(dpy, charms_emblem_pm, 0, NULL);
+    XPutImage(dpy, charms_emblem_pm, egc, xi, 0, 0, 0, 0, disp, disp);
+    XFreeGC(dpy, egc);
+    XDestroyImage(xi);
+    charms_emblem_ready = 1;
+}
+
+static void layout_charms_windows(void) {
+    int strip_x = root_w - CHARMS_STRIP_W;
+    int clock_x = CHARMS_TIME_PAD;
+    int clock_y = root_h - CHARMS_TIME_H - CHARMS_TIME_PAD;
+    if (clock_y < CHARMS_TIME_PAD)
+        clock_y = CHARMS_TIME_PAD;
+    XMoveResizeWindow(dpy, charms_strip, strip_x, 0, CHARMS_STRIP_W, root_h);
+    XMoveResizeWindow(dpy, charms_clock, clock_x, clock_y, CHARMS_TIME_W, CHARMS_TIME_H);
+}
+
+static void draw_charms_clock(void) {
+    time_t now = time(NULL);
+    struct tm tm;
+    localtime_r(&now, &tm);
+    char time_buf[32];
+    char date_buf[64];
+    strftime(time_buf, sizeof(time_buf), "%-I:%M", &tm);
+    strftime(date_buf, sizeof(date_buf), "%A\n%B %-d", &tm);
+
+    XSetForeground(dpy, gc_title, rgb(0, 0, 0));
+    XFillRectangle(dpy, charms_clock, gc_title, 0, 0, CHARMS_TIME_W, CHARMS_TIME_H);
+
+    int ty = CHARMS_TIME_PAD + (charms_time_font ? charms_time_font->ascent : 36);
+    if (charms_time_font) {
+        XftDraw *xd = XftDrawCreate(dpy, charms_clock, visual, xft_cmap);
+        if (xd) {
+            XftColor col;
+            XRenderColor rc = render_rgb(255, 255, 255);
+            if (XftColorAllocValue(dpy, visual, xft_cmap, &rc, &col)) {
+                XftDrawStringUtf8(xd, &col, charms_time_font, CHARMS_TIME_PAD, ty,
+                    (FcChar8 *)time_buf, (int)strlen(time_buf));
+                XftColorFree(dpy, visual, xft_cmap, &col);
+            }
+            XftDrawDestroy(xd);
+        }
+    }
+
+    int dy = ty + (charms_date_font ? charms_date_font->height + 6 : 28);
+    if (charms_date_font) {
+        XftDraw *xd = XftDrawCreate(dpy, charms_clock, visual, xft_cmap);
+        if (xd) {
+            XftColor col;
+            XRenderColor rc = render_rgb(220, 220, 230);
+            if (XftColorAllocValue(dpy, visual, xft_cmap, &rc, &col)) {
+                char *line = date_buf;
+                while (line && *line) {
+                    char *nl = strchr(line, '\n');
+                    int len = nl ? (int)(nl - line) : (int)strlen(line);
+                    XftDrawStringUtf8(xd, &col, charms_date_font, CHARMS_TIME_PAD, dy,
+                        (FcChar8 *)line, len);
+                    dy += charms_date_font->height + 2;
+                    line = nl ? nl + 1 : NULL;
+                }
+                XftColorFree(dpy, visual, xft_cmap, &col);
+            }
+            XftDrawDestroy(xd);
+        }
+    }
+    charms_clock_last = now;
+}
+
+static void draw_charms_strip(void) {
+    int btn0_y = (root_h - CHARMS_BTN_H * 2) / 2;
+    int btn1_y = btn0_y + CHARMS_BTN_H;
+
+    XSetForeground(dpy, gc_title, rgb(16, 16, 16));
+    XFillRectangle(dpy, charms_strip, gc_title, 0, 0, CHARMS_STRIP_W, root_h);
+
+    for (int b = 0; b < 2; b++) {
+        int y0 = b == 0 ? btn0_y : btn1_y;
+        if (charms_hover == b + 1) {
+            XSetForeground(dpy, gc_title, rgb(55, 55, 58));
+            XFillRectangle(dpy, charms_strip, gc_title, 0, y0, CHARMS_STRIP_W, CHARMS_BTN_H);
+        }
+    }
+
+    if (charms_emblem_ready) {
+        int ex = (CHARMS_STRIP_W - CHARMS_EMBLEM_SZ) / 2;
+        int ey = btn0_y + (CHARMS_BTN_H - CHARMS_EMBLEM_SZ) / 2;
+        XCopyArea(dpy, charms_emblem_pm, charms_strip, gc_title,
+            0, 0, CHARMS_EMBLEM_SZ, CHARMS_EMBLEM_SZ, ex, ey);
+    }
+
+    xft_draw(charms_strip, 10, btn1_y + text_baseline(CHARMS_BTN_H / 2),
+        "Close", 255, 255, 255);
+    xft_draw(charms_strip, 18, btn0_y + CHARMS_BTN_H - 14, "Home", 200, 200, 210);
+}
+
+static void charms_show(void) {
+    if (charms_visible || !top_metro_client())
+        return;
+    layout_charms_windows();
+    charms_visible = 1;
+    charms_hover = 0;
+    XMapRaised(dpy, charms_clock);
+    XMapRaised(dpy, charms_strip);
+    draw_charms_clock();
+    draw_charms_strip();
+}
+
+static void charms_hide(void) {
+    if (!charms_visible)
+        return;
+    charms_visible = 0;
+    charms_hover = 0;
+    XUnmapWindow(dpy, charms_strip);
+    XUnmapWindow(dpy, charms_clock);
+}
+
+static int charms_btn_at(int x, int y) {
+    if (x < 0 || x >= CHARMS_STRIP_W)
+        return 0;
+    int btn0_y = (root_h - CHARMS_BTN_H * 2) / 2;
+    if (y >= btn0_y && y < btn0_y + CHARMS_BTN_H)
+        return 1;
+    if (y >= btn0_y + CHARMS_BTN_H && y < btn0_y + CHARMS_BTN_H * 2)
+        return 2;
+    return 0;
+}
+
+static void charms_pointer_update(int x, int y) {
+    if (!top_metro_client()) {
+        charms_hide();
+        return;
+    }
+    int in_edge = x >= root_w - CHARMS_EDGE_ZONE;
+    int in_strip = charms_visible && x >= root_w - CHARMS_STRIP_W;
+    if (in_edge || in_strip) {
+        if (!charms_visible)
+            charms_show();
+        if (in_strip) {
+            int rel_y = y;
+            int btn = charms_btn_at(x - (root_w - CHARMS_STRIP_W), rel_y);
+            if (btn != charms_hover) {
+                charms_hover = btn;
+                draw_charms_strip();
+            }
+        } else if (charms_hover) {
+            charms_hover = 0;
+            draw_charms_strip();
+        }
+    } else {
+        charms_hide();
+    }
+}
+
+static void charms_handle_click(int btn) {
+    Client *c = top_metro_client();
+    if (!c || !btn)
+        return;
+    charms_hide();
+    if (btn == 1)
+        metro_return_to_start(c);
+    else if (btn == 2)
+        close_client(c);
+}
+
+static void charms_tick_clock(void) {
+    if (!charms_visible)
+        return;
+    time_t now = time(NULL);
+    if (now != charms_clock_last)
+        draw_charms_clock();
+}
+
+static void create_charms_windows(void) {
+    XSetWindowAttributes attr;
+    unsigned long black = rgb(16, 16, 16);
+
+    charms_strip = XCreateSimpleWindow(dpy, root, 0, 0, CHARMS_STRIP_W, root_h, 0, 0, black);
+    charms_clock = XCreateSimpleWindow(dpy, root, 0, 0, CHARMS_TIME_W, CHARMS_TIME_H, 0, 0, black);
+
+    attr.override_redirect = True;
+    attr.event_mask = ExposureMask | ButtonPressMask | PointerMotionMask | LeaveWindowMask;
+    XChangeWindowAttributes(dpy, charms_strip, CWOverrideRedirect | CWEventMask, &attr);
+    attr.event_mask = ExposureMask;
+    XChangeWindowAttributes(dpy, charms_clock, CWOverrideRedirect | CWEventMask, &attr);
+
+    XUnmapWindow(dpy, charms_strip);
+    XUnmapWindow(dpy, charms_clock);
+    charms_visible = 0;
+
+    charms_emblem_init();
+
+    static const char *const time_fonts[] = {
+        "sans-serif-48:weight=light",
+        "Segoe UI-48:weight=light",
+        "DejaVu Sans-48",
+        NULL
+    };
+    for (int i = 0; time_fonts[i]; i++) {
+        charms_time_font = XftFontOpenName(dpy, screen, time_fonts[i]);
+        if (charms_time_font && charms_time_font->ascent > 0)
+            break;
+        if (charms_time_font) {
+            XftFontClose(dpy, charms_time_font);
+            charms_time_font = NULL;
+        }
+    }
+    static const char *const date_fonts[] = {
+        "sans-serif-13",
+        "DejaVu Sans-13",
+        NULL
+    };
+    for (int i = 0; date_fonts[i]; i++) {
+        charms_date_font = XftFontOpenName(dpy, screen, date_fonts[i]);
+        if (charms_date_font && charms_date_font->ascent > 0)
+            break;
+        if (charms_date_font) {
+            XftFontClose(dpy, charms_date_font);
+            charms_date_font = NULL;
+        }
+    }
+}
+
+static void metro_check_swipe_gesture(XMotionEvent *ev) {
+    if (!metro_swipe)
+        return;
+    Client *c = top_metro_client();
+    if (!c)
+        return;
+    if (metro_swipe_y - ev->y_root >= METRO_SWIPE_THRESHOLD)
+        metro_return_to_start(c);
+    metro_swipe = 0;
+}
+
+static void layout_metro_client(Client *c) {
+    XMoveResizeWindow(dpy, c->client, 0, 0, c->w, c->h);
+}
+
+static void hide_metro_chrome(Client *c) {
+    XUnmapWindow(dpy, c->title);
+    XUnmapWindow(dpy, c->btn_min);
+    XUnmapWindow(dpy, c->btn_max);
+    XUnmapWindow(dpy, c->btn_close);
+    XUnmapWindow(dpy, c->resize_grip);
+}
+
 static void handle_crash_button(XButtonEvent *btn) {
     if (btn->window == crash_bar) {
         if (crash_bar_click((int)btn->y))
@@ -756,18 +1114,25 @@ static void resize_client_to(Client *c, int w, int h) {
 
 static void map_client(Client *c) {
     XMapWindow(dpy, c->frame);
-    XMapSubwindows(dpy, c->frame);
+    if (c->metro)
+        XMapWindow(dpy, c->client);
+    else
+        XMapSubwindows(dpy, c->frame);
     c->mapped = 1;
     bump_panel();
+    update_metro_root_state();
 }
 
 static void unmap_client(Client *c) {
     XUnmapWindow(dpy, c->frame);
     c->mapped = 0;
     bump_panel();
+    update_metro_root_state();
 }
 
 static void close_client(Client *c) {
+    if (!c)
+        return;
     XEvent ev;
     memset(&ev, 0, sizeof(ev));
     ev.xclient.type = ClientMessage;
@@ -776,6 +1141,9 @@ static void close_client(Client *c) {
     ev.xclient.format = 32;
     ev.xclient.data.l[0] = wm_delete;
     XSendEvent(dpy, c->client, False, NoEventMask, &ev);
+    XFlush(dpy);
+    if (c->metro)
+        remove_client(c);
 }
 
 static void maximize_client(Client *c) {
@@ -854,11 +1222,22 @@ static void add_client(Window w) {
     int client_h = wa.height < 300 ? 400 : wa.height;
     c->x = 80 + nclients * 24;
     c->y = 60 + nclients * 24;
+    c->metro = client_has_metro_flag(w);
     read_client_hints(w, &c->x, &c->y, &client_w, &client_h);
-    c->w = client_w;
-    c->h = client_h + TITLE_H;
-    update_root_geom();
-    clamp_client_geometry(c);
+    if (c->metro) {
+        update_root_geom();
+        c->x = 0;
+        c->y = 0;
+        c->w = root_w;
+        c->h = root_h;
+        client_w = root_w;
+        client_h = root_h;
+    } else {
+        c->w = client_w;
+        c->h = client_h + TITLE_H;
+        update_root_geom();
+        clamp_client_geometry(c);
+    }
 
     c->frame = XCreateSimpleWindow(dpy, root, c->x, c->y, c->w, c->h, 2,
         rgb(70, 75, 90), rgb(28, 30, 38));
@@ -877,12 +1256,27 @@ static void add_client(Window w) {
         ButtonPressMask | ButtonReleaseMask | PointerMotionMask | ExposureMask);
     XSelectInput(dpy, c->client, PropertyChangeMask);
 
-    XReparentWindow(dpy, w, c->frame, 0, TITLE_H);
+    if (c->metro) {
+        XReparentWindow(dpy, w, c->frame, 0, 0);
+        hide_metro_chrome(c);
+        layout_metro_client(c);
+        XSelectInput(dpy, c->frame,
+            SubstructureRedirectMask | SubstructureNotifyMask |
+            ButtonPressMask | ButtonReleaseMask | PointerMotionMask);
+    } else {
+        XReparentWindow(dpy, w, c->frame, 0, TITLE_H);
+        layout_client(c);
+    }
     tag_frame(c);
     fetch_client_title(c);
-    layout_client(c);
     map_client(c);
     update_net_client_list();
+
+    if (c->metro) {
+        raise_client(c);
+        update_metro_root_state();
+        return;
+    }
 
     XGrabButton(dpy, Button1, AnyModifier, c->title, False,
         ButtonPressMask | ButtonReleaseMask | PointerMotionMask,
@@ -904,6 +1298,7 @@ static void remove_client(Client *c) {
     memmove(&clients[idx], &clients[idx + 1], (nclients - idx - 1) * sizeof(Client));
     nclients--;
     update_net_client_list();
+    update_metro_root_state();
 }
 
 static void handle_root_activate(void) {
@@ -999,11 +1394,7 @@ static void handle_destroy(XDestroyWindowEvent *e) {
     if (e->window == menu_win)
         return;
     for (int i = 0; i < nclients; i++) {
-        if (clients[i].client == e->window) {
-            remove_client(&clients[i]);
-            return;
-        }
-        if (clients[i].frame == e->window) {
+        if (clients[i].client == e->window || clients[i].frame == e->window) {
             remove_client(&clients[i]);
             return;
         }
@@ -1054,11 +1445,15 @@ int main(void) {
     br8_client = XInternAtom(dpy, "_BR8_CLIENT", False);
     br8_panel_rev = XInternAtom(dpy, "_BR8_PANEL_REV", False);
     br8_activate = XInternAtom(dpy, "_BR8_ACTIVATE", False);
+    br8_metro = XInternAtom(dpy, "_BR8_METRO", False);
+    br8_start_open = XInternAtom(dpy, "_BR8_START_OPEN", False);
+    br8_metro_active = XInternAtom(dpy, "_BR8_METRO_ACTIVE", False);
     net_wm_window_type = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE", False);
     net_wm_window_type_desktop = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE_DESKTOP", False);
 
     XSelectInput(dpy, root,
         SubstructureRedirectMask | SubstructureNotifyMask | ButtonPressMask |
+        ButtonReleaseMask | PointerMotionMask |
         PropertyChangeMask | StructureNotifyMask);
     XSetErrorHandler(NULL);
     signal(SIGCHLD, SIG_IGN);
@@ -1074,6 +1469,7 @@ int main(void) {
     adopt_existing_clients();
     create_menu();
     create_crash_windows();
+    create_charms_windows();
     bump_panel();
     poll_panel_crash();
 
@@ -1084,13 +1480,19 @@ int main(void) {
         poll_panel_crash();
 
         if (!XPending(dpy)) {
+            if (charms_visible)
+                charms_tick_clock();
             struct timeval tv = { .tv_sec = 0, .tv_usec = 250000 };
+            if (charms_visible)
+                tv.tv_usec = 500000;
             int xfd = ConnectionNumber(dpy);
             fd_set fds;
             FD_ZERO(&fds);
             FD_SET(xfd, &fds);
             select(xfd + 1, &fds, NULL, NULL, &tv);
             poll_panel_crash();
+            if (charms_visible)
+                charms_tick_clock();
         }
 
         XEvent ev;
@@ -1114,9 +1516,26 @@ int main(void) {
                 c->mapped = 0;
         } else if (ev.type == ConfigureNotify && ev.xconfigure.window == root) {
             update_root_geom();
+            for (int i = 0; i < nclients; i++) {
+                if (clients[i].metro && clients[i].mapped) {
+                    clients[i].x = 0;
+                    clients[i].y = 0;
+                    clients[i].w = root_w;
+                    clients[i].h = root_h;
+                    XMoveResizeWindow(dpy, clients[i].frame, 0, 0, root_w, root_h);
+                    layout_metro_client(&clients[i]);
+                }
+            }
             if (crash_visible)
                 layout_crash_windows();
+            if (charms_visible)
+                layout_charms_windows();
         } else if (ev.type == ButtonPress) {
+            if (ev.xbutton.window == charms_strip) {
+                int btn = charms_btn_at((int)ev.xbutton.x, (int)ev.xbutton.y);
+                charms_handle_click(btn);
+                continue;
+            }
             if (ev.xbutton.window == crash_bar || ev.xbutton.window == crash_drawer) {
                 handle_crash_button(&ev.xbutton);
                 continue;
@@ -1134,9 +1553,24 @@ int main(void) {
                 show_menu(ev.xbutton.x_root, ev.xbutton.y_root);
                 continue;
             }
+            if (ev.xbutton.window == root) {
+                if (ev.xbutton.y_root >= root_h - METRO_SWIPE_ZONE) {
+                    metro_swipe = 1;
+                    metro_swipe_y = ev.xbutton.y_root;
+                }
+                hide_menu();
+                continue;
+            }
             hide_menu();
             Client *c = find_client(ev.xbutton.window);
             if (!c)
+                continue;
+            if (c->metro && ev.xbutton.y_root >= root_h - METRO_SWIPE_ZONE) {
+                metro_swipe = 1;
+                metro_swipe_y = ev.xbutton.y_root;
+                continue;
+            }
+            if (c->metro)
                 continue;
             if (ev.xbutton.window == c->btn_close)
                 close_client(c);
@@ -1160,17 +1594,24 @@ int main(void) {
                 resize_w = c->w;
                 resize_h = c->h;
             }
-        } else if (ev.type == ButtonRelease && (dragging || resizing)) {
-            dragging = 0;
-            drag_client = NULL;
-            resizing = 0;
-            resize_client = NULL;
+        } else if (ev.type == ButtonRelease) {
+            if (metro_swipe)
+                metro_swipe = 0;
+            if (dragging || resizing) {
+                dragging = 0;
+                drag_client = NULL;
+                resizing = 0;
+                resize_client = NULL;
+            }
         } else if (ev.type == MotionNotify) {
+            if (metro_swipe && (ev.xmotion.state & Button1Mask))
+                metro_check_swipe_gesture(&ev.xmotion);
+            charms_pointer_update(ev.xmotion.x_root, ev.xmotion.y_root);
             if (menu_visible && ev.xmotion.window == menu_win) {
                 menu_set_hover(menu_item_at((int)ev.xmotion.y));
                 continue;
             }
-            if (dragging && drag_client) {
+            if (dragging && drag_client && !drag_client->metro) {
                 drag_client->x = ev.xmotion.x_root - drag_x;
                 drag_client->y = ev.xmotion.y_root - drag_y;
                 clamp_client_geometry(drag_client);
@@ -1190,6 +1631,10 @@ int main(void) {
                 draw_crash_drawer();
             else if (ev.xexpose.window == menu_win && ev.xexpose.count == 0)
                 draw_menu();
+            else if (ev.xexpose.window == charms_strip && ev.xexpose.count == 0)
+                draw_charms_strip();
+            else if (ev.xexpose.window == charms_clock && ev.xexpose.count == 0)
+                draw_charms_clock();
             else {
                 Client *c = find_client(ev.xexpose.window);
                 if (c) {

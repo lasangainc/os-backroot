@@ -54,6 +54,7 @@ static Visual *visual;
 static Colormap xft_cmap;
 static int panel_w;
 static Atom br8_frame, br8_client, br8_panel_rev, br8_activate, br8_start_open;
+static Atom br8_metro_active;
 static Atom net_wm_icon, net_wm_name, utf8_string;
 static TaskBtn tasks[MAX_TASKS];
 static int ntasks;
@@ -846,12 +847,26 @@ static int read_start_open(void) {
     return open;
 }
 
+static int read_metro_active(void) {
+    Atom actual;
+    int fmt;
+    unsigned long n, bytes;
+    unsigned long *data = NULL;
+    int active = 0;
+    if (XGetWindowProperty(dpy, root, br8_metro_active, 0, 8, False, XA_CARDINAL,
+            &actual, &fmt, &n, &bytes, (unsigned char **)&data) == Success && data && n > 0)
+        active = data[0] ? 1 : 0;
+    if (data)
+        XFree(data);
+    return active;
+}
+
 static void sync_panel_visibility(void) {
-    int open = read_start_open();
-    if (open && !start_menu_open) {
+    int hide = read_start_open() || read_metro_active();
+    if (hide && !start_menu_open) {
         XUnmapWindow(dpy, panel);
         start_menu_open = 1;
-    } else if (!open && start_menu_open) {
+    } else if (!hide && start_menu_open) {
         start_menu_open = 0;
         XMapRaised(dpy, panel);
         draw_panel();
@@ -892,6 +907,7 @@ int main(void) {
     br8_panel_rev = XInternAtom(dpy, "_BR8_PANEL_REV", False);
     br8_activate = XInternAtom(dpy, "_BR8_ACTIVATE", False);
     br8_start_open = XInternAtom(dpy, "_BR8_START_OPEN", False);
+    br8_metro_active = XInternAtom(dpy, "_BR8_METRO_ACTIVE", False);
     net_wm_icon = XInternAtom(dpy, "_NET_WM_ICON", False);
     net_wm_name = XInternAtom(dpy, "_NET_WM_NAME", False);
     utf8_string = XInternAtom(dpy, "UTF8_STRING", False);
@@ -953,7 +969,8 @@ int main(void) {
                     last_rev = read_panel_rev();
                     if (!start_menu_open)
                         draw_panel();
-                } else if (ev.xproperty.atom == br8_start_open) {
+                } else if (ev.xproperty.atom == br8_start_open ||
+                           ev.xproperty.atom == br8_metro_active) {
                     sync_panel_visibility();
                 }
             }
