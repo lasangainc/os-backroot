@@ -131,7 +131,7 @@ build_binaries_on_host() {
 
 build_binaries_in_chroot() {
     log "Building binaries inside $ARCH chroot..."
-    local bdir="/tmp/backroot8-build"
+    local bdir="/root/backroot8-build"
     sudo rm -rf "$MNT$bdir"
     sudo mkdir -p "$MNT$bdir"
     sudo cp -a "$ROOT/src" "$ROOT/include" "$ROOT/assets" "$MNT$bdir/"
