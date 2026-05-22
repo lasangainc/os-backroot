@@ -262,7 +262,10 @@ mount_if --bind /sys "$MNT/sys"
 mount_if --bind /run "$MNT/run"
 sudo mkdir -p "$MNT/dev/pts"
 mount_if -t devpts devpts "$MNT/dev/pts"
-[[ -f /etc/resolv.conf ]] && sudo cp /etc/resolv.conf "$MNT/etc/resolv.conf"
+if [[ -f /etc/resolv.conf ]]; then
+    sudo rm -f "$MNT/etc/resolv.conf"
+    sudo cp /etc/resolv.conf "$MNT/etc/resolv.conf"
+fi
 
 sudo sed -i 's/^#DisableSandbox.*/DisableSandbox/' "$MNT/etc/pacman.conf" 2>/dev/null || true
 grep -q '^DisableSandbox' "$MNT/etc/pacman.conf" || \
