@@ -25,7 +25,7 @@ NATIVE_BUILD=0
 [[ "$ARCH" == "$HOST_ARCH" ]] && NATIVE_BUILD=1
 
 if [[ "$ARCH" == "aarch64" ]]; then
-    XORG_DRV=xf86-video-modesetting
+    XORG_DRV=xf86-video-fbdev
     GRUB_TARGET=arm64-efi
     KERNEL_PKG=linux-aarch64
     VMLINUZ=vmlinuz-linux-aarch64
