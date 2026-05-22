@@ -18,5 +18,7 @@ src/br8-wm/br8-wm
 src/br8-panel/br8-panel
 src/backroot-hello/backroot-hello
 src/power-pdf/powerpdf
+src/br8-start/br8-start
 *.exit
 vm/build*.log
+vm/*.zst
