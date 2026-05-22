@@ -1,4 +1,8 @@
 vm/*.img
+vm/*.iso
+vm/iso-staging/
+vm/iso-boot-serial.log
+vm/iso-boot-qemu.log
 vm/*.tar.zst
 vm/mnt/
 vm/vmlinuz-linux
