@@ -169,6 +169,10 @@ sudo install -Dm644 "$ROOT/rootfs-overlay/usr/share/applications/powerpdf.deskto
 sudo install -Dm755 "$ROOT/rootfs-overlay/etc/X11/xinit/xinitrc" "$MNT/etc/X11/xinit/xinitrc"
 sudo install -Dm644 "$ROOT/rootfs-overlay/usr/share/backgrounds/backroot8.jpg" \
     "$MNT/usr/share/backgrounds/backroot8.jpg"
+sudo install -Dm644 "$ROOT/rootfs-overlay/usr/share/backgrounds/backroot8-alt.jpg" \
+    "$MNT/usr/share/backgrounds/backroot8-alt.jpg"
+sudo install -Dm644 "$ROOT/rootfs-overlay/etc/backroot8/wallpaper" \
+    "$MNT/etc/backroot8/wallpaper"
 sudo install -Dm644 "$ROOT/rootfs-overlay/usr/share/backroot8/bootscreen.png" \
     "$MNT/usr/share/backroot8/bootscreen.png"
 sudo install -Dm755 "$ROOT/rootfs-overlay/usr/share/backroot8/show-splash.sh" \
