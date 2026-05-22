@@ -12,7 +12,8 @@ if ! command -v fbi >/dev/null; then
     exit 0
 fi
 
+# -fit: letterbox entire splash on screen (do not crop/zoom into the logo only)
 if [ -c /dev/fb0 ]; then
-    exec fbi -T 1 -d /dev/fb0 -noverbose -a "$IMG" </dev/tty1
+    exec fbi -T 1 -d /dev/fb0 -noverbose -fit "$IMG" </dev/tty1
 fi
-exec fbi -T 1 -noverbose -a "$IMG" </dev/tty1
+exec fbi -T 1 -noverbose -fit "$IMG" </dev/tty1
