@@ -70,7 +70,7 @@ nohup qemu-system-aarch64 \
     -smp "$CPUS" \
     -kernel "$KERNEL" \
     -initrd "$INITRD" \
-    -append "root=LABEL=backroot8-aarch64 rw console=ttyAMA0" \
+    -append "root=LABEL=backroot8arm rw console=ttyAMA0" \
     -drive file="$DISK",format=raw,if=virtio \
     -netdev user,id=net0,hostfwd=tcp::2223-:22 \
     -device virtio-net-pci,netdev=net0 \

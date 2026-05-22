@@ -16,6 +16,7 @@ esac
 VM_DIR="$ROOT/vm"
 DISK="$VM_DIR/backroot8-${ARCH}.img"
 BOOTSTRAP="$VM_DIR/archlinux-bootstrap-${ARCH}.tar.zst"
+ALARM_ROOTFS="$VM_DIR/ArchLinuxARM-aarch64-latest.tar.gz"
 PACMAN_ALARM_CONF="$VM_DIR/pacman-alarm-aarch64.conf"
 MNT="$VM_DIR/mnt"
 SIZE_MB="${DISK_SIZE_MB:-6144}"
@@ -90,11 +91,19 @@ EOF
 }
 
 bootstrap_alarm_root() {
-    log "Bootstrapping aarch64 root via pacstrap (Arch Linux ARM)..."
-    write_alarm_pacman_conf
+    if [[ ! -f "$ALARM_ROOTFS" ]]; then
+        log "Downloading Arch Linux ARM aarch64 rootfs (large, one-time)..."
+        curl -fL --retry 3 -o "$ALARM_ROOTFS" \
+            "http://os.archlinuxarm.org/os/ArchLinuxARM-aarch64-latest.tar.gz"
+    fi
+    log "Extracting Arch Linux ARM rootfs..."
     setup_aarch64_chroot
-    sudo pacstrap -C "$PACMAN_ALARM_CONF" -K -c "$MNT" \
-        base archlinuxarm-keyring archlinux-keyring
+    sudo tar -xzf "$ALARM_ROOTFS" -C "$MNT"
+    if [[ -d "$MNT/ArchLinuxARM-aarch64-latest" ]]; then
+        sudo mv "$MNT/ArchLinuxARM-aarch64-latest"/* "$MNT/"
+        sudo rmdir "$MNT/ArchLinuxARM-aarch64-latest" 2>/dev/null || \
+            sudo rm -rf "$MNT/ArchLinuxARM-aarch64-latest"
+    fi
 }
 
 build_binaries_on_host() {
@@ -210,7 +219,7 @@ if [[ ! -f "$DISK" ]]; then
 fi
 
 DISK_LABEL="backroot8"
-[[ "$ARCH" == "aarch64" ]] && DISK_LABEL="backroot8-aarch64"
+[[ "$ARCH" == "aarch64" ]] && DISK_LABEL="backroot8arm"
 
 if ! sudo blkid "$DISK" | grep -q ext4; then
     log "Formatting whole disk as ext4 (LABEL=$DISK_LABEL)..."
@@ -355,7 +364,7 @@ EOF
 
 # aarch64 image uses a distinct ext4 label for multi-arch VM hosts
 if [[ "$ARCH" == "aarch64" ]]; then
-    sudo sed -i 's/LABEL=backroot8/LABEL=backroot8-aarch64/' "$MNT/boot/grub/grub.cfg"
+    sudo sed -i 's/LABEL=backroot8/LABEL=backroot8arm/' "$MNT/boot/grub/grub.cfg"
 fi
 
 LOOP_DEV="${LOOP:-$(losetup -j "$DISK" 2>/dev/null | awk -F: '{print $1}' | head -1)}"

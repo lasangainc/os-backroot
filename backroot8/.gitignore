@@ -9,6 +9,8 @@ vm/backroot8-x86_64.img
 vm/backroot8-aarch64.img
 vm/archlinux-bootstrap-x86_64.tar.zst
 vm/archlinux-bootstrap-aarch64.tar.zst
+vm/ArchLinuxARM-aarch64-latest.tar.gz
+vm/pacman-alarm-aarch64.conf
 vm/qemu.pid
 vm/websockify.pid
 vm/websockify.log
