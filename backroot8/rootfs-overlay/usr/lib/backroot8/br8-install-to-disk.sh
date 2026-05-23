@@ -27,6 +27,69 @@ fail() {
     exit 1
 }
 
+# Live ISO stores vmlinuz/initramfs on the ISO volume, not in the squashfs root.
+install_boot_images() {
+    local dst="$TARGET/boot"
+    local vmlinuz="$dst/vmlinuz-linux"
+    local initrd="$dst/initramfs-linux.img"
+    local iso_mnt="/run/br8-install/iso"
+    local candidate src
+
+    mkdir -p "$dst"
+
+    if [[ -f /boot/vmlinuz-linux ]]; then
+        echo "[br8-install] copying kernel from live /boot"
+        cp -a /boot/vmlinuz-linux "$vmlinuz"
+        [[ -f /boot/initramfs-linux.img ]] && cp -a /boot/initramfs-linux.img "$initrd"
+    fi
+
+    if [[ ! -f "$vmlinuz" && -f /run/br8/sq/boot/vmlinuz-linux ]]; then
+        echo "[br8-install] copying kernel from squashfs lower /boot"
+        cp -a /run/br8/sq/boot/vmlinuz-linux "$vmlinuz"
+        [[ -f /run/br8/sq/boot/initramfs-linux.img ]] && \
+            cp -a /run/br8/sq/boot/initramfs-linux.img "$initrd"
+    fi
+
+    if [[ ! -f "$vmlinuz" ]]; then
+        mkdir -p "$iso_mnt"
+        for candidate in /dev/disk/by-label/BACKROOT8_M1 /dev/sr0 /dev/sr1; do
+            [[ -e "$candidate" ]] || continue
+            if mount -t iso9660 -o ro "$candidate" "$iso_mnt" 2>/dev/null; then
+                if [[ -f "$iso_mnt/boot/vmlinuz-linux" ]]; then
+                    echo "[br8-install] copying kernel from ISO ($candidate)"
+                    cp -a "$iso_mnt/boot/vmlinuz-linux" "$vmlinuz"
+                    [[ -f "$iso_mnt/boot/initramfs-linux.img" ]] && \
+                        cp -a "$iso_mnt/boot/initramfs-linux.img" "$initrd"
+                    umount "$iso_mnt" 2>/dev/null || true
+                    break
+                fi
+                umount "$iso_mnt" 2>/dev/null || true
+            fi
+        done
+        rmdir "$iso_mnt" 2>/dev/null || true
+    fi
+
+    if [[ ! -f "$vmlinuz" ]]; then
+        # Last resort: extract from the installed linux package on the target root.
+        local pkg
+        pkg="$(find "$TARGET/var/cache/pacman/pkg" -name 'linux-*.pkg.tar.*' 2>/dev/null | sort | tail -1)"
+        if [[ -n "$pkg" && -f "$pkg" ]]; then
+            echo "[br8-install] extracting kernel from $pkg"
+            tar -xf "$pkg" -C "$TARGET" boot/vmlinuz-linux boot/initramfs-linux.img 2>/dev/null || true
+        fi
+    fi
+
+    [[ -f "$vmlinuz" ]] || fail "could not locate vmlinuz-linux for installation"
+    echo "[br8-install] boot images installed: $(ls -lh "$vmlinuz" "$initrd" 2>/dev/null || ls -lh "$vmlinuz")"
+}
+
+unmount_target_binds() {
+    local _d
+    for _d in run sys proc dev; do
+        umount -l "$TARGET/$_d" 2>/dev/null || umount "$TARGET/$_d" 2>/dev/null || true
+    done
+}
+
 [[ -n "$DISK" && -b "$DISK" ]] || fail "invalid disk $DISK"
 grep -q 'backroot8iso' /proc/cmdline || fail "not a live session"
 
@@ -78,6 +141,9 @@ rsync -aAXH \
     --exclude=/swapfile \
     / "$TARGET/" || fail "rsync failed"
 
+status 45 "Installing kernel and boot files…"
+install_boot_images
+
 status 55 "Configuring system for disk boot…"
 # Installed system must not use live-only initramfs hooks.
 if [[ -f "$TARGET/etc/mkinitcpio.conf" ]]; then
@@ -119,19 +185,13 @@ chroot_cmd() {
 status 70 "Installing boot loaders…"
 chroot_cmd /bin/bash -eux <<CHROOT
 set -e
-if [[ ! -f /boot/vmlinuz-linux ]]; then
-    echo "missing /boot/vmlinuz-linux on target" >&2
-    exit 1
-fi
 mkinitcpio -P
 grub-install --target=i386-pc --force-extra-removable "$DISK"
 grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=Backroot8 --recheck
 grub-mkconfig -o /boot/grub/grub.cfg
 CHROOT
 
-for _d in run sys proc dev; do
-    umount "$TARGET/$_d" 2>/dev/null || true
-done
+unmount_target_binds
 
 status 85 "Finishing first-run setup…"
 mkdir -p "$TARGET/etc/backroot8"
