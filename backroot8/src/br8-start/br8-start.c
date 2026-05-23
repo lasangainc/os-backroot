@@ -439,7 +439,7 @@ static void spawn_dolphin(void) {
         _exit(1);
     setenv("HOME", "/root", 1);
     setenv("DISPLAY", ":0", 1);
-    execl("/usr/bin/dolphin", "dolphin", "/", NULL);
+    execl("/usr/bin/pcmanfm", "pcmanfm", "/", NULL);
     _exit(1);
 }
 

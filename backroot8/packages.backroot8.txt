@@ -8,7 +8,7 @@ xorg-xinit
 xorg-xrandr
 xf86-video-vesa
 xterm
-dolphin
+pcmanfm
 feh
 fbida
 nettle

@@ -6,7 +6,6 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 VM_DIR="$ROOT/vm"
 ROOTFS="$VM_DIR/rootfs"
 ISO_STAGING="$VM_DIR/iso-staging"
-ROOT_IMG="$VM_DIR/backroot8-root.img"
 ISO_OUT="${ISO_OUT:-$VM_DIR/backroot8-live.iso}"
 VERSION_TAG="${BACKROOT8_VERSION:-8-milestone1}"
 
@@ -36,26 +35,28 @@ if [[ ! -f "$ROOTFS/boot/vmlinuz-linux" ]]; then
 fi
 
 log "Staging ISO (${VERSION_TAG})..."
-rm -rf "$ISO_STAGING" "$ROOT_IMG"
+rm -rf "$ISO_STAGING"
 mkdir -p "$ISO_STAGING/boot/grub"
 
-log "Trimming package caches (smaller ISO)..."
+log "Trimming package caches (smaller ISO / less RAM to boot)..."
 rm -rf "$ROOTFS/var/cache/pacman/pkg"/* \
     "$ROOTFS/usr/share/doc"/* \
-    "$ROOTFS/usr/share/man"/* 2>/dev/null || true
+    "$ROOTFS/usr/share/man"/* \
+    "$ROOTFS/usr/share/info"/* 2>/dev/null || true
+# Drop non-English locales to shrink the RAM-copied root image
+if [[ -d "$ROOTFS/usr/share/locale" ]]; then
+    find "$ROOTFS/usr/share/locale" -mindepth 1 -maxdepth 1 ! -name 'en_US*' -exec rm -rf {} + 2>/dev/null || true
+fi
 
 cp "$ROOTFS/boot/vmlinuz-linux" "$ISO_STAGING/boot/vmlinuz-linux"
 cp "$ROOTFS/boot/initramfs-linux.img" "$ISO_STAGING/boot/initramfs-linux.img"
 
 USED_MB="$(du -sm "$ROOTFS" | awk '{print $1}')"
-IMG_MB=$(( USED_MB + 512 ))
-log "Creating ext4 root image (${IMG_MB}MB) for squashfs..."
-mkfs.ext4 -F -L backroot8 -d "$ROOTFS" "$ROOT_IMG" "${IMG_MB}M"
+log "Rootfs size: ${USED_MB}MB (squashfs root; works with 2GB+ RAM)"
 
-log "Compressing root into squashfs..."
-mksquashfs "$ROOT_IMG" "$ISO_STAGING/backroot8-root.squashfs" \
-    -comp zstd -Xcompression-level 15 -noappend
-rm -f "$ROOT_IMG"
+log "Compressing rootfs into squashfs..."
+mksquashfs "$ROOTFS" "$ISO_STAGING/backroot8-root.squashfs" \
+    -comp zstd -Xcompression-level 15 -noappend -e boot
 
 cat > "$ISO_STAGING/boot/grub/grub.cfg" <<'GRUB'
 set default=0
@@ -67,7 +68,7 @@ menuentry "Backroot 8 Live" {
     else
         search --no-floppy --file --set=root /boot/vmlinuz-linux
     fi
-    linux /boot/vmlinuz-linux backroot8iso root=LABEL=backroot8 rootdelay=3 fsck.mode=skip rw quiet loglevel=3 console=ttyS0,115200 earlyprintk=ttyS0,115200
+    linux /boot/vmlinuz-linux backroot8iso rw quiet loglevel=3 console=ttyS0,115200 earlyprintk=ttyS0,115200
     initrd /boot/initramfs-linux.img
 }
 GRUB

@@ -88,7 +88,8 @@ setup_desktop_vnc() {
         return 0
     fi
 
-    echo "Falling back to QEMU VGA VNC on 127.0.0.1:${VNC_PORT}" >&2
+    echo "WARNING: Guest X11/x11vnc not ready — showing QEMU VGA (often blank/black)." >&2
+    echo "         Wait for boot, or rebuild ISO after backroot8-live-cow fix. SSH: port ${SSH_PORT}" >&2
     return 1
 }
 

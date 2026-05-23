@@ -6,7 +6,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 ISO="${ISO:-$ROOT/vm/backroot8-live.iso}"
 SERIAL_LOG="$ROOT/vm/iso-boot-serial.log"
 TIMEOUT_SEC="${BOOT_VERIFY_TIMEOUT:-900}"
-RAM_MB="${RAM_MB:-2048}"
+RAM_MB="${RAM_MB:-4096}"
 
 if [[ ! -f "$ISO" ]]; then
     echo "ISO not found: $ISO (run: sudo ./scripts/build-iso.sh)" >&2
@@ -62,7 +62,7 @@ while (( SECONDS < deadline )); do
         if grep -qE 'Kernel panic|VFS: Cannot open root device|Failed to mount|ALERT!.*failed' "$SERIAL_LOG"; then
             fail "boot error detected in serial log"
         fi
-        if grep -q 'backroot8_iso: root image on' "$SERIAL_LOG" 2>/dev/null && \
+        if grep -qE 'backroot8_root: live root on overlay|backroot8_iso: writable root' "$SERIAL_LOG" 2>/dev/null && \
            grep -q 'backroot8 login:' "$SERIAL_LOG"; then
             ok=1
             break

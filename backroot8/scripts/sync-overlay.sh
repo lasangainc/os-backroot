@@ -68,11 +68,21 @@ install -Dm644 "$ROOT/rootfs-overlay/etc/systemd/system/backroot8-desktop.servic
     "$DEST/etc/systemd/system/backroot8-desktop.service"
 install -Dm644 "$ROOT/rootfs-overlay/etc/systemd/system/backroot8-splash.service" \
     "$DEST/etc/systemd/system/backroot8-splash.service"
+install -Dm644 "$ROOT/rootfs-overlay/etc/systemd/system/backroot8-live-cow.service" \
+    "$DEST/etc/systemd/system/backroot8-live-cow.service"
+install -Dm755 "$ROOT/rootfs-overlay/usr/lib/backroot8/live-cow-setup.sh" \
+    "$DEST/usr/lib/backroot8/live-cow-setup.sh"
+install -Dm644 "$ROOT/rootfs-overlay/etc/X11/xorg.conf.d/10-vesa.conf" \
+    "$DEST/etc/X11/xorg.conf.d/10-vesa.conf"
 install -Dm644 "$ROOT/rootfs-overlay/etc/fonts/conf.d/99-segoe-ui.conf" \
     "$DEST/etc/fonts/conf.d/99-segoe-ui.conf"
 install -Dm755 "$ROOT/rootfs-overlay/etc/initcpio/install/backroot8_iso" \
     "$DEST/etc/initcpio/install/backroot8_iso"
 install -Dm755 "$ROOT/rootfs-overlay/etc/initcpio/hooks/backroot8_iso" \
     "$DEST/etc/initcpio/hooks/backroot8_iso"
+install -Dm755 "$ROOT/rootfs-overlay/etc/initcpio/install/backroot8_root" \
+    "$DEST/etc/initcpio/install/backroot8_root"
+install -Dm755 "$ROOT/rootfs-overlay/etc/initcpio/hooks/backroot8_root" \
+    "$DEST/etc/initcpio/hooks/backroot8_root"
 
 log "Overlay sync complete: $DEST"

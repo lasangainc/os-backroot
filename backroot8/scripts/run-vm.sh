@@ -7,7 +7,7 @@ ISO="${ISO:-$ROOT/vm/backroot8-live.iso}"
 PIDFILE="$ROOT/vm/qemu.pid"
 VNC_DISPLAY="${VNC_DISPLAY:-:2}"
 VNC_PORT="${VNC_PORT:-5902}"
-RAM_MB="${RAM_MB:-2048}"
+RAM_MB="${RAM_MB:-4096}"
 CPUS="${CPUS:-2}"
 
 if [[ ! -f "$ISO" ]]; then

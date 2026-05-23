@@ -1,0 +1,9 @@
+#!/bin/bash
+build() {
+    add_module overlay
+    add_runscript
+}
+
+help() {
+    echo 'Backroot 8: mount overlay root before pivot'
+}

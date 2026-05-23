@@ -1,0 +1,25 @@
+#!/usr/bin/ash
+# Mount writable overlay root for squashfs-based live ISO (no RAM disk copy).
+
+run_hook() {
+    grep -q 'backroot8iso' /proc/cmdline || return 0
+    [ -d /run/br8/sq/bin ] || return 0
+    [ -f /run/br8/sq/backroot8-root.img ] && return 0
+
+    modprobe overlay 2>/dev/null
+    mkdir -p /run/br8/cow/upper /run/br8/cow/work /new_root
+    mount -t tmpfs tmpfs /run/br8/cow -o mode=0755,size=50%
+    if ! mount -t overlay overlay \
+        -o lowerdir=/run/br8/sq,upperdir=/run/br8/cow/upper,workdir=/run/br8/cow/work \
+        /new_root; then
+        echo "backroot8_root: overlay mount failed" >/dev/console
+        return 1
+    fi
+    echo "backroot8_root: live root on overlay" >/dev/console
+    touch /run/br8/overlay_root
+    # Root is already on /new_root; skip LABEL= mount in init (would stack ro fs).
+    default_mount_handler() {
+        msg ":: Backroot 8 overlay root ready"
+        return 0
+    }
+}

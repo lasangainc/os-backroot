@@ -1,0 +1,13 @@
+[Unit]
+Description=Backroot 8 live writable root setup
+DefaultDependencies=no
+After=local-fs.target
+Before=dbus.service systemd-logind.service backroot8-splash.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/backroot8/live-cow-setup.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

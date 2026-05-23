@@ -104,7 +104,9 @@ ExecStart=
 ExecStart=-/usr/bin/agetty --autologin root --noclear %I $TERM
 AUTO
 
-sed -i 's/^HOOKS=.*/HOOKS=(base udev modconf block backroot8_iso filesystems fsck)/' /etc/mkinitcpio.conf
+sed -i 's/^HOOKS=.*/HOOKS=(base udev modconf block backroot8_iso backroot8_root filesystems fsck)/' /etc/mkinitcpio.conf
+grep -q '^MODULES=.*overlay' /etc/mkinitcpio.conf || \
+    sed -i 's/^MODULES=(/MODULES=(overlay /' /etc/mkinitcpio.conf
 pacman -Syu --noconfirm
 CHROOT
 
@@ -122,7 +124,9 @@ install -Dm644 "$SEGOE_TMP/extract/EULA.txt" \
 arch-chroot "$ROOTFS" fc-cache -f
 rm -rf "$SEGOE_TMP"
 
-arch-chroot "$ROOTFS" systemctl enable backroot8-splash.service backroot8-desktop.service sshd 2>/dev/null || true
+arch-chroot "$ROOTFS" systemctl enable \
+    backroot8-live-cow.service backroot8-splash.service backroot8-desktop.service sshd \
+    2>/dev/null || true
 
 mkdir -p "$ROOTFS/root"
 cat > "$ROOTFS/root/.xinitrc" <<'EOF'
@@ -130,10 +134,6 @@ cat > "$ROOTFS/root/.xinitrc" <<'EOF'
 exec /etc/X11/xinit/xinitrc
 EOF
 chmod +x "$ROOTFS/root/.xinitrc"
-
-cat > "$ROOTFS/root/.bash_profile" <<'EOF'
-[[ -z $DISPLAY && $XDG_VTNR -eq 1 ]] && exec startx
-EOF
 
 log "Regenerating initramfs with backroot8_iso hook..."
 arch-chroot "$ROOTFS" mkinitcpio -P

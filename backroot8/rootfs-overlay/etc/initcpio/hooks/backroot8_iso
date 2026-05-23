@@ -1,5 +1,5 @@
 #!/usr/bin/ash
-# Expose ISO embedded ext4 (inside squashfs) as loop device for root=LABEL=backroot8.
+# Backroot 8 ISO: load squashfs from media; ext4-in-squashfs uses RAM copy.
 
 run_hook() {
     if ! grep -q 'backroot8iso' /proc/cmdline; then
@@ -39,19 +39,33 @@ run_hook() {
     fi
     umount "$mnt"
 
+    # Squashfs holds the rootfs tree — backroot8_root hook mounts overlay.
+    if [ -f "$sqmnt/bin/bash" ]; then
+        echo "backroot8_iso: squashfs rootfs loaded" >/dev/console
+        return 0
+    fi
+
     if [ ! -f "$sqmnt/backroot8-root.img" ]; then
-        echo "backroot8_iso: missing backroot8-root.img in squashfs" >/dev/console
+        echo "backroot8_iso: invalid ISO layout" >/dev/console
         return 1
     fi
+
+    imgsz=$(stat -c %s "$sqmnt/backroot8-root.img" 2>/dev/null || echo 0)
+    echo "backroot8_iso: copying root ($((imgsz / 1024 / 1024)) MiB) to RAM..." >/dev/console
+    if ! cp "$sqmnt/backroot8-root.img" /run/backroot8-root.img; then
+        echo "backroot8_iso: RAM copy failed — use 4GB+ RAM or rebuild ISO with squashfs root" >/dev/console
+        return 1
+    fi
+    umount "$sqmnt"
 
     img_dev=$(losetup -f)
     if [ -z "$img_dev" ]; then
         echo "backroot8_iso: no free loop device" >/dev/console
         return 1
     fi
-    if ! losetup "$img_dev" "$sqmnt/backroot8-root.img"; then
+    if ! losetup "$img_dev" /run/backroot8-root.img; then
         echo "backroot8_iso: losetup failed" >/dev/console
         return 1
     fi
-    echo "backroot8_iso: root image on ${img_dev}" >/dev/console
+    echo "backroot8_iso: writable root on ${img_dev}" >/dev/console
 }
