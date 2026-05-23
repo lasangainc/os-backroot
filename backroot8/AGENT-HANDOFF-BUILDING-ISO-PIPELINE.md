@@ -2,7 +2,7 @@
 
 **Branch:** `buildingisopipe`  
 **Base:** `cursor/live-iso-43f1` (PR #24 — Milestone 1 ISO scaffolding)  
-**Status:** Overlay boot fix in progress (`cursor/iso-overlay-boot-fix-4a43`) — util-linux `mount` in initramfs + tmpfs upperdir ordering.
+**Status:** Overlay boot verified; Xorg uses `modesetting` for QEMU std VGA (vesa conflicts with kernel fb).
 
 ## Goal
 
@@ -15,20 +15,11 @@ Deliver a bootable **Backroot 8 live ISO** (`vm/backroot8-live.iso`) that starts
 - **`sudo ./scripts/build-iso.sh`** — Produces `vm/backroot8-live.iso` (~1.1 GB) using **squashfs of rootfs** (no longer ext4-in-squashfs only).
 - **Earlier verify** — Login on serial passed with old **ext4-in-squashfs + RAM copy** layout (needs ~4 GB RAM). That path may still exist in `backroot8_iso` hook as legacy fallback if `backroot8-root.img` exists on ISO.
 
-## What is broken (user report + last verify)
+## Resolved (cursor/iso-overlay-boot-fix-4a43)
 
-**Symptom:** Blank screen + blinking cursor in noVNC (cursor resets ~every 3–15 s).
-
-**Causes identified:**
-
-1. **Read-only root (fixed in theory):** Old ISO mounted ext4 loop from **read-only** squashfs → systemd-logind/X failed. New approach: squashfs rootfs + **overlay** on tmpfs (`backroot8_root` hook).
-2. **Overlay boot not passing verify yet:** Last serial log:
-   ```
-   mount: /new_root: special device overlay does not exist
-   backroot8_root: overlay mount failed
-   ```
-   `overlay` was added to `MODULES` and `add_module` in initcpio install scripts; `mkinitcpio -v` shows `overlay.ko.zst` when run in chroot — ensure **ISO staging copies fresh** `initramfs-linux.img` after every `mkinitcpio -P`.
-3. **noVNC vs VGA:** `run-vm-gui.sh` falls back to **QEMU VGA VNC** if guest x11vnc/X11 socket is not ready — VGA shows **tty/console**, not X. Even with working X, browser may look blank until x11vnc tunnel works.
+1. **Overlay mount:** Busybox `mount` in initramfs does not support `-t overlay`. Pack `/usr/bin/mount` via `backroot8_root` install hook; create cow `upper`/`work` after tmpfs mount.
+2. **Desktop / noVNC:** `xf86-video-vesa` fails with “Refusing to run, Framebuffer or dri device present” on QEMU `-vga std`. Use **modesetting** in `10-vesa.conf`.
+3. **build-root verify:** `lsinitcpio -l` (v41) replaces removed `-m`/`-k` flags.
 
 ## Uncommitted / WIP changes on this branch
 
@@ -53,7 +44,7 @@ Deliver a bootable **Backroot 8 live ISO** (`vm/backroot8-live.iso`) that starts
 
 1. **Confirm overlay in booted initramfs**
    ```bash
-   sudo arch-chroot backroot8/vm/rootfs lsinitcpio -m /boot/initramfs-linux.img | grep overlay
+   sudo arch-chroot backroot8/vm/rootfs lsinitcpio -l /boot/initramfs-linux.img | grep overlay
    ```
    Rebuild ISO only after `mkinitcpio -P` inside properly mounted rootfs (`build-root.sh` does mounts).
 

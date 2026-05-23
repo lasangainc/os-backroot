@@ -137,11 +137,11 @@ chmod +x "$ROOTFS/root/.xinitrc"
 
 log "Regenerating initramfs with backroot8_iso hook..."
 arch-chroot "$ROOTFS" mkinitcpio -P
-if ! arch-chroot "$ROOTFS" lsinitcpio -m /boot/initramfs-linux.img | grep -q '^overlay$'; then
+if ! arch-chroot "$ROOTFS" lsinitcpio -l /boot/initramfs-linux.img | grep -q 'kernel/fs/overlayfs/overlay.ko'; then
     log "ERROR: overlay module missing from initramfs (check mkinitcpio hooks)"
     exit 1
 fi
-if ! arch-chroot "$ROOTFS" lsinitcpio -k /boot/initramfs-linux.img | grep -q '/usr/bin/mount$'; then
+if ! arch-chroot "$ROOTFS" lsinitcpio -l /boot/initramfs-linux.img | grep -q '^usr/bin/mount$'; then
     log "ERROR: util-linux mount missing from initramfs (overlay needs it)"
     exit 1
 fi
