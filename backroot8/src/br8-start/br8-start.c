@@ -16,6 +16,7 @@
 #include <time.h>
 #include <errno.h>
 #include <sys/stat.h>
+#include <pwd.h>
 
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_NO_SIMD
@@ -33,6 +34,8 @@
 #define MAX_APPS 256
 #define MAX_HOME_TILES 24
 #define WALLPAPER "/usr/share/backgrounds/backroot8.jpg"
+#define USER_PIC "/usr/share/backroot8/default-user.png"
+#define USER_AVATAR_SZ 48
 #define CONFIG_DIR "/root/.config/backroot8"
 #define CONFIG_PATH CONFIG_DIR "/start_layout"
 #define OPEN_SLIDE_X 100
@@ -106,7 +109,11 @@ static struct timespec open_anim_start;
 static int open_start_x[MAX_HOME_TILES];
 static int open_stagger_rank[MAX_HOME_TILES];
 static int home_header_x;
+static int user_avatar_x;
 static int layout_animating;
+static Pixmap user_pic_pm;
+static int user_pic_ready;
+static char user_display_name[64];
 static struct timespec last_tick;
 
 static Pixmap buf_pm;
@@ -144,6 +151,7 @@ static int ctx_is_tile;
 
 static void draw_all(void);
 static void mark_dirty(void);
+static int user_avatar_target_x(void);
 static void layout_home(void);
 static void save_layout(void);
 static void load_layout(void);
@@ -373,6 +381,7 @@ static void hide_menu(void) {
 static void begin_open_animation(void) {
     open_anim = 0.0;
     home_header_x = -OPEN_SLIDE_X;
+    user_avatar_x = win_w + 40;
     clock_gettime(CLOCK_MONOTONIC, &open_anim_start);
     clock_gettime(CLOCK_MONOTONIC, &last_tick);
     layout_home();
@@ -895,6 +904,15 @@ static void tick_animations(void) {
                 he = 1.0;
             home_header_x = lerp_i(-OPEN_SLIDE_X, MARGIN, ease_out_cubic(he));
         }
+        if (header_el < 0.0)
+            user_avatar_x = win_w + 40;
+        else {
+            double he = header_el / HOME_HEADER_SLIDE_MS;
+            if (he > 1.0)
+                he = 1.0;
+            user_avatar_x = lerp_i(win_w + 40, user_avatar_target_x(),
+                ease_out_cubic(he));
+        }
         mark_dirty();
     } else if (layout_animating) {
         smooth_tiles(dt);
@@ -1080,6 +1098,80 @@ static Pixmap scale_image_to_pixmap(unsigned char *src, int sw, int sh, int dw, 
     return pm;
 }
 
+static void init_user_name(void) {
+    const char *name = getenv("USER");
+    struct passwd *pw = getpwuid(getuid());
+    if (pw && pw->pw_name && pw->pw_name[0])
+        name = pw->pw_name;
+    if (!name || !name[0])
+        name = "root";
+    strncpy(user_display_name, name, sizeof(user_display_name) - 1);
+    user_display_name[sizeof(user_display_name) - 1] = '\0';
+}
+
+static void load_user_picture(void) {
+    if (user_pic_pm) {
+        XFreePixmap(dpy, user_pic_pm);
+        user_pic_pm = 0;
+    }
+    user_pic_ready = 0;
+    if (!start_win)
+        return;
+    int iw = 0, ih = 0, comp = 0;
+    unsigned char *data = stbi_load(USER_PIC, &iw, &ih, &comp, 3);
+    if (!data || iw <= 0 || ih <= 0)
+        return;
+    user_pic_pm = scale_image_to_pixmap(data, iw, ih, USER_AVATAR_SZ, USER_AVATAR_SZ);
+    stbi_image_free(data);
+    user_pic_ready = user_pic_pm != 0;
+}
+
+static int user_avatar_target_x(void) {
+    return win_w - MARGIN - USER_AVATAR_SZ;
+}
+
+static int user_avatar_y(void) {
+    if (header_font) {
+        int band = header_font->ascent + header_font->descent;
+        int ay = MARGIN + (band - USER_AVATAR_SZ) / 2;
+        return ay < MARGIN ? MARGIN : ay;
+    }
+    return MARGIN;
+}
+
+static void draw_user_header(Drawable dst, GC g) {
+    int ax = user_avatar_x;
+    if (ax > win_w - MARGIN / 2)
+        return;
+
+    int ay = user_avatar_y();
+    if (user_pic_ready)
+        XCopyArea(dpy, user_pic_pm, dst, g, 0, 0, USER_AVATAR_SZ, USER_AVATAR_SZ, ax, ay);
+    else {
+        XSetForeground(dpy, g, rgb(70, 110, 170));
+        XFillRectangle(dpy, dst, g, ax, ay, USER_AVATAR_SZ, USER_AVATAR_SZ);
+        char letter[2] = { user_display_name[0]
+                ? (char)toupper((unsigned char)user_display_name[0]) : '?', 0 };
+        if (ui_font) {
+            XGlyphInfo ext;
+            XftTextExtentsUtf8(dpy, ui_font, (FcChar8 *)letter, 1, &ext);
+            xft_draw(dst, ui_font, ax + (USER_AVATAR_SZ - ext.xOff) / 2,
+                ay + text_baseline(USER_AVATAR_SZ, ui_font), letter, 255, 255, 255);
+        }
+    }
+
+    if (!ui_font || !user_display_name[0])
+        return;
+    XGlyphInfo ext;
+    int nlen = (int)strlen(user_display_name);
+    XftTextExtentsUtf8(dpy, ui_font, (FcChar8 *)user_display_name, nlen, &ext);
+    int gap = 12;
+    int nx = ax - gap - ext.xOff;
+    int ny = ay + text_baseline(USER_AVATAR_SZ, ui_font);
+    if (nx >= MARGIN)
+        xft_draw(dst, ui_font, nx, ny, user_display_name, 255, 255, 255);
+}
+
 static void load_wallpaper(void) {
     if (wallpaper_pm) {
         XFreePixmap(dpy, wallpaper_pm);
@@ -1191,6 +1283,7 @@ static void draw_home_section(Drawable dst, GC g) {
     if (header_font && home_header_x > -OPEN_SLIDE_X - 80)
         xft_draw(dst, header_font, home_header_x, MARGIN + header_font->ascent,
             "Home", 255, 255, 255);
+    draw_user_header(dst, g);
 
     for (int pass = 0; pass < 2; pass++) {
         for (int s = 0; s < n_tile_order; s++) {
@@ -1333,6 +1426,7 @@ static void draw_all(void) {
         draw_context_menu(buf_pm, buf_gc);
         if (!dragging && !layout_animating && open_anim >= 1.0) {
             home_header_x = MARGIN;
+            user_avatar_x = user_avatar_target_x();
             for (int i = 0; i < n_home_tiles; i++) {
                 Tile *t = &home_tiles[i];
                 t->anim_x = t->layout_x;
@@ -1666,7 +1760,9 @@ int main(void) {
         ButtonReleaseMask | PointerMotionMask | KeyPressMask;
     XChangeWindowAttributes(dpy, start_win, CWOverrideRedirect | CWEventMask, &attr);
     gc = XCreateGC(dpy, start_win, 0, NULL);
+    init_user_name();
     load_wallpaper();
+    load_user_picture();
     clock_gettime(CLOCK_MONOTONIC, &last_tick);
     XUnmapWindow(dpy, start_win);
     visible = 0;
