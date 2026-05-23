@@ -94,6 +94,10 @@ sed -i 's/^#*PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd
 grep -q '^PermitRootLogin yes' /etc/ssh/sshd_config || echo 'PermitRootLogin yes' >> /etc/ssh/sshd_config
 grep -q '^PasswordAuthentication yes' /etc/ssh/sshd_config || echo 'PasswordAuthentication yes' >> /etc/ssh/sshd_config
 
+ssh-keygen -A
+chown root:root /usr/share/empty.sshd
+chmod 755 /usr/share/empty.sshd
+
 systemctl enable NetworkManager
 systemctl enable sshd
 
