@@ -2,23 +2,33 @@
 
 Bootable hybrid live ISO for BIOS and UEFI systems.
 
+## Download
+
+**[GitHub Release v8-milestone1](https://github.com/lasangainc/os-backroot/releases/tag/v8-milestone1)** — asset `backroot8-milestone1.iso` (~1.1 GB).
+
 ## Build
 
 On Ubuntu/Debian (host deps once):
 
 ```bash
+cd backroot8
 sudo ./scripts/install-iso-build-deps.sh
+sudo ./scripts/build-root.sh
 sudo ./scripts/build-iso.sh
 ```
 
-`build-iso.sh` builds the Arch root under `vm/rootfs/` (first run) and writes `vm/backroot8-live.iso`.
+Writes `vm/backroot8-live.iso`. To refresh the GitHub release asset after a fix:
+
+```bash
+sudo ./scripts/publish-milestone1-release.sh
+```
 
 Iterate on the desktop, then rebuild:
 
 ```bash
 # After editing src/ or rootfs-overlay/
-sudo ./scripts/build-root.sh    # refresh rootfs only
-sudo ./scripts/build-iso.sh     # new ISO
+sudo ./scripts/build-root.sh
+sudo ./scripts/build-iso.sh
 ```
 
 Package list: [`packages.backroot8.txt`](packages.backroot8.txt)
@@ -26,8 +36,8 @@ Package list: [`packages.backroot8.txt`](packages.backroot8.txt)
 ## Test in QEMU
 
 ```bash
-./scripts/verify-iso-boot.sh    # headless boot check (serial log)
-./scripts/run-vm-gui.sh         # browser GUI via noVNC
+./scripts/verify-iso-boot.sh
+./scripts/run-vm-gui.sh
 ```
 
 **http://localhost:6080/vnc.html?autoconnect=1&resize=scale**
@@ -50,6 +60,7 @@ Credentials: `root` / `backroot8`
 
 ## Technical notes
 
-- Kernel and initramfs load from the ISO; root is an ext4 image inside `backroot8-root.squashfs`.
-- Kernel parameter `backroot8iso` triggers the `backroot8_iso` mkinitcpio hook ([`rootfs-overlay/etc/initcpio/`](rootfs-overlay/etc/initcpio/)).
+- Kernel and initramfs load from the ISO; root is a **squashfs** tree on the ISO with a **tmpfs overlay** for a writable live system (`backroot8_iso` + `backroot8_root` mkinitcpio hooks).
+- Kernel parameter `backroot8iso` selects the live boot path ([`rootfs-overlay/etc/initcpio/`](rootfs-overlay/etc/initcpio/)).
+- QEMU / emulated VGA: Xorg uses the **modesetting** driver (vesa conflicts with the kernel framebuffer).
 - VM disk images (`backroot8.img`) are no longer used; development boots the same ISO as release.
