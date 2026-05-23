@@ -51,7 +51,16 @@
 #define COL_MUTED_B 255
 
 #define STATUS_PATH "/run/br8-install/status"
+#define LOG_PATH "/run/br8-install/install.log"
 #define INSTALL_SCRIPT "/usr/lib/backroot8/br8-install-to-disk.sh"
+#define LOG_BTN_W 148
+#define LOG_WIN_W 740
+#define LOG_WIN_H 520
+#define LOG_PAD 14
+#define LOG_CLOSE_W 100
+#define LOG_CLOSE_H 36
+#define LOG_MAX_LINES 256
+#define LOG_COLS 88
 
 typedef enum {
     STEP_WELCOME,
@@ -74,7 +83,15 @@ static Window root, win;
 static GC gc;
 static Visual *visual;
 static Colormap cmap;
-static XftFont *font_title, *font_head, *font_body, *font_btn;
+static XftFont *font_title, *font_head, *font_body, *font_btn, *font_log;
+static Window log_win;
+static GC log_gc;
+static int log_visible;
+static int log_scroll;
+static int log_follow_tail = 1;
+static int log_btn_hover, log_close_hover;
+static char log_lines[LOG_MAX_LINES][LOG_COLS];
+static int n_log_lines;
 static Step step = STEP_WELCOME;
 static DiskEntry disks[MAX_DISKS];
 static int n_disks;
@@ -184,6 +201,13 @@ static void open_fonts(void) {
     font_head = open_font(head_names);
     font_body = open_font(body_names);
     font_btn = open_font(btn_names);
+    static const char *const log_names[] = {
+        "DejaVu Sans Mono-11:antialias=true",
+        "Consolas-11:antialias=true",
+        "DejaVu Sans-11",
+        NULL
+    };
+    font_log = open_font(log_names);
 }
 
 static int is_live_boot(void) {
@@ -318,7 +342,8 @@ static void load_banner(void) {
     banner_ready = 1;
 }
 
-static void draw_metro_btn(int x, int y, int w, int h, const char *label, int hover, int inverse) {
+static void draw_metro_btn_d(Drawable draw, GC g, int x, int y, int w, int h,
+        const char *label, int hover, int inverse) {
     int bg_r, bg_g, bg_b, fg_r, fg_g, fg_b;
     if (inverse) {
         if (hover) {
@@ -347,11 +372,15 @@ static void draw_metro_btn(int x, int y, int w, int h, const char *label, int ho
             fg_r = fg_g = fg_b = 255;
         }
     }
-    XSetForeground(dpy, gc, rgb(bg_r, bg_g, bg_b));
-    XFillRectangle(dpy, win, gc, x, y, w, h);
+    XSetForeground(dpy, g, rgb(bg_r, bg_g, bg_b));
+    XFillRectangle(dpy, draw, g, x, y, w, h);
     int tw = text_width(font_btn, label);
-    xft_draw(win, x + (w - tw) / 2, y + text_baseline(h, font_btn),
+    xft_draw(draw, x + (w - tw) / 2, y + text_baseline(h, font_btn),
         label, fg_r, fg_g, fg_b, font_btn);
+}
+
+static void draw_metro_btn(int x, int y, int w, int h, const char *label, int hover, int inverse) {
+    draw_metro_btn_d(win, gc, x, y, w, h, label, hover, inverse);
 }
 
 static void draw_banner(int y0) {
@@ -458,6 +487,135 @@ static void draw_setup(void) {
         install_hover, 1);
 }
 
+static void reload_log_lines(void) {
+    FILE *fp = fopen(LOG_PATH, "r");
+    char buf[65536];
+    size_t len = 0;
+
+    n_log_lines = 0;
+    if (!fp) {
+        snprintf(log_lines[0], LOG_COLS, "(waiting for install log…)");
+        n_log_lines = 1;
+        return;
+    }
+    if (fseek(fp, 0, SEEK_END) == 0) {
+        long sz = ftell(fp);
+        if (sz > (long)(sizeof buf - 1)) {
+            fseek(fp, sz - (long)(sizeof buf - 1), SEEK_SET);
+            len = fread(buf, 1, sizeof buf - 1, fp);
+        } else {
+            fseek(fp, 0, SEEK_SET);
+            len = fread(buf, 1, sizeof buf - 1, fp);
+        }
+    } else {
+        len = fread(buf, 1, sizeof buf - 1, fp);
+    }
+    buf[len] = '\0';
+    fclose(fp);
+
+    char *line = buf;
+    while (*line && n_log_lines < LOG_MAX_LINES) {
+        char *nl = strchr(line, '\n');
+        if (nl)
+            *nl++ = '\0';
+        snprintf(log_lines[n_log_lines], LOG_COLS, "%.87s", line);
+        n_log_lines++;
+        if (!nl)
+            break;
+        line = nl;
+    }
+    if (n_log_lines == 0) {
+        snprintf(log_lines[0], LOG_COLS, "(log empty)");
+        n_log_lines = 1;
+    }
+}
+
+static void draw_log_popup(void);
+static void draw_all(void);
+
+static void ensure_log_window(void) {
+    XSetWindowAttributes attr;
+
+    if (log_win)
+        return;
+    log_win = XCreateSimpleWindow(dpy, root, win_x + 50, win_y + 50, LOG_WIN_W, LOG_WIN_H, 2,
+        rgb(255, 255, 255), rgb(24, 36, 56));
+    attr.event_mask = ExposureMask | StructureNotifyMask | ButtonPressMask |
+        PointerMotionMask;
+    XChangeWindowAttributes(dpy, log_win, CWEventMask, &attr);
+    XStoreName(dpy, log_win, "Install output");
+    log_gc = XCreateGC(dpy, log_win, 0, NULL);
+}
+
+static void show_log_popup(void) {
+    ensure_log_window();
+    log_visible = 1;
+    log_follow_tail = 1;
+    log_scroll = 0;
+    reload_log_lines();
+    if (n_log_lines > 20)
+        log_scroll = n_log_lines - 20;
+    XMapRaised(dpy, log_win);
+    draw_log_popup();
+}
+
+static void hide_log_popup(void) {
+    if (!log_visible)
+        return;
+    log_visible = 0;
+    XUnmapWindow(dpy, log_win);
+    draw_all();
+}
+
+static void draw_log_popup(void) {
+    int lh, visible_lines, text_h, y0, i, close_x, close_y;
+
+    if (!log_visible || !log_win)
+        return;
+    reload_log_lines();
+
+    XSetForeground(dpy, log_gc, rgb(24, 36, 56));
+    XFillRectangle(dpy, log_win, log_gc, 0, 0, LOG_WIN_W, LOG_WIN_H);
+
+    xft_draw(log_win, LOG_PAD, LOG_PAD + 18, "Install output",
+        COL_TEXT_R, COL_TEXT_G, COL_TEXT_B, font_head);
+
+    lh = font_log ? font_log->height + 2 : 14;
+    text_h = LOG_WIN_H - LOG_PAD * 2 - LOG_CLOSE_H - 36;
+    visible_lines = text_h / lh;
+    if (visible_lines < 4)
+        visible_lines = 4;
+
+    if (log_follow_tail && n_log_lines > visible_lines)
+        log_scroll = n_log_lines - visible_lines;
+    if (log_scroll < 0)
+        log_scroll = 0;
+    if (log_scroll > n_log_lines - 1)
+        log_scroll = n_log_lines > visible_lines ? n_log_lines - visible_lines : 0;
+
+    y0 = LOG_PAD + 36;
+    XSetForeground(dpy, log_gc, rgb(12, 24, 40));
+    XFillRectangle(dpy, log_win, log_gc, LOG_PAD, y0, LOG_WIN_W - LOG_PAD * 2, text_h);
+
+    for (i = 0; i < visible_lines; i++) {
+        int idx = log_scroll + i;
+        if (idx >= n_log_lines)
+            break;
+        xft_draw(log_win, LOG_PAD + 8, y0 + 8 + (i + 1) * lh,
+            log_lines[idx], 220, 230, 245, font_log);
+    }
+
+    close_x = LOG_WIN_W - LOG_PAD - LOG_CLOSE_W;
+    close_y = LOG_WIN_H - LOG_PAD - LOG_CLOSE_H;
+    draw_metro_btn_d(log_win, log_gc, close_x, close_y, LOG_CLOSE_W, LOG_CLOSE_H,
+        "Close", log_close_hover, 1);
+}
+
+static void install_output_btn(int *bx, int *by) {
+    *bx = PAD;
+    *by = WIN_H - PAD - BTN_H;
+}
+
 static int read_install_status(int *pct, char *msg, size_t msgsz) {
     FILE *fp = fopen(STATUS_PATH, "r");
     char line[256];
@@ -514,6 +672,12 @@ static void draw_installing(void) {
         snprintf(msg, sizeof msg, "Preparing installation…");
     xft_draw(win, PAD, bar_y + bar_h + 24, msg,
         COL_MUTED_R, COL_MUTED_G, COL_MUTED_B, font_body);
+
+    {
+        int obx, oby;
+        install_output_btn(&obx, &oby);
+        draw_metro_btn(obx, oby, LOG_BTN_W, BTN_H, "View output", log_btn_hover, 0);
+    }
 
     if (st == 2) {
         step = STEP_ALL_DONE;
@@ -621,7 +785,22 @@ static void maybe_shutdown(void) {
     }
 }
 
+static void handle_log_click(int x, int y) {
+    int close_x = LOG_WIN_W - LOG_PAD - LOG_CLOSE_W;
+    int close_y = LOG_WIN_H - LOG_PAD - LOG_CLOSE_H;
+    if (point_in_rect(x, y, close_x, close_y, LOG_CLOSE_W, LOG_CLOSE_H))
+        hide_log_popup();
+}
+
 static void handle_click(int x, int y) {
+    if (step == STEP_INSTALLING) {
+        int obx, oby;
+        install_output_btn(&obx, &oby);
+        if (point_in_rect(x, y, obx, oby, LOG_BTN_W, BTN_H)) {
+            show_log_popup();
+            return;
+        }
+    }
     if (step == STEP_WELCOME) {
         int bx, by;
         welcome_start_btn(&bx, &by);
@@ -647,7 +826,7 @@ static void handle_click(int x, int y) {
 }
 
 static void update_hover(int x, int y) {
-    int ns = 0, ni = 0, nb = 0;
+    int ns = 0, ni = 0, nb = 0, lo = 0;
     if (step == STEP_WELCOME) {
         int bx, by;
         welcome_start_btn(&bx, &by);
@@ -655,11 +834,16 @@ static void update_hover(int x, int y) {
     } else if (step == STEP_SETUP) {
         nb = point_in_rect(x, y, PAD, WIN_H - PAD - BTN_H, BTN_W, BTN_H);
         ni = point_in_rect(x, y, WIN_W - PAD - BTN_W, WIN_H - PAD - BTN_H, BTN_W, BTN_H);
+    } else if (step == STEP_INSTALLING) {
+        int obx, oby;
+        install_output_btn(&obx, &oby);
+        lo = point_in_rect(x, y, obx, oby, LOG_BTN_W, BTN_H);
     }
-    if (ns != start_hover || ni != install_hover || nb != back_hover) {
+    if (ns != start_hover || ni != install_hover || nb != back_hover || lo != log_btn_hover) {
         start_hover = ns;
         install_hover = ni;
         back_hover = nb;
+        log_btn_hover = lo;
         draw_all();
     }
 }
@@ -717,6 +901,8 @@ int main(void) {
             FD_SET(xfd, &fds);
             select(xfd + 1, &fds, NULL, NULL, &tv);
             draw_all();
+            if (log_visible)
+                draw_log_popup();
             if (step == STEP_ALL_DONE)
                 maybe_shutdown();
         } else {
@@ -730,22 +916,52 @@ int main(void) {
         while (XPending(dpy)) {
             XEvent ev;
             XNextEvent(dpy, &ev);
-            if (ev.type == Expose && ev.xexpose.count == 0 && ev.xexpose.window == win)
-                draw_all();
-            else if (ev.type == ConfigureNotify && ev.xconfigure.window == win) {
+            if (ev.type == Expose && ev.xexpose.count == 0) {
+                if (ev.xexpose.window == win)
+                    draw_all();
+                else if (ev.xexpose.window == log_win && log_visible)
+                    draw_log_popup();
+            } else if (ev.type == ConfigureNotify && ev.xconfigure.window == win) {
                 win_x = ev.xconfigure.x;
                 win_y = ev.xconfigure.y;
                 (void)win_x;
                 (void)win_y;
-            } else if (ev.type == MotionNotify && ev.xmotion.window == win)
-                update_hover((int)ev.xmotion.x, (int)ev.xmotion.y);
-            else if (ev.type == ButtonPress && ev.xbutton.window == win) {
-                if (ev.xbutton.button == Button4 && step == STEP_SETUP)
-                    tos_scroll = tos_scroll > 12 ? tos_scroll - 12 : 0;
-                else if (ev.xbutton.button == Button5 && step == STEP_SETUP)
-                    tos_scroll += 12;
-                else if (ev.xbutton.button == Button1)
-                    handle_click((int)ev.xbutton.x, (int)ev.xbutton.y);
+            } else if (ev.type == MotionNotify) {
+                if (ev.xmotion.window == win)
+                    update_hover((int)ev.xmotion.x, (int)ev.xmotion.y);
+                else if (ev.xmotion.window == log_win) {
+                    int close_x = LOG_WIN_W - LOG_PAD - LOG_CLOSE_W;
+                    int close_y = LOG_WIN_H - LOG_PAD - LOG_CLOSE_H;
+                    int h = point_in_rect((int)ev.xmotion.x, (int)ev.xmotion.y,
+                        close_x, close_y, LOG_CLOSE_W, LOG_CLOSE_H);
+                    if (h != log_close_hover) {
+                        log_close_hover = h;
+                        draw_log_popup();
+                    }
+                }
+            } else if (ev.type == ButtonPress) {
+                if (ev.xbutton.button == Button4) {
+                    if (ev.xbutton.window == log_win && log_visible) {
+                        log_follow_tail = 0;
+                        log_scroll -= 3;
+                        if (log_scroll < 0)
+                            log_scroll = 0;
+                        draw_log_popup();
+                    } else if (ev.xbutton.window == win && step == STEP_SETUP)
+                        tos_scroll = tos_scroll > 12 ? tos_scroll - 12 : 0;
+                } else if (ev.xbutton.button == Button5) {
+                    if (ev.xbutton.window == log_win && log_visible) {
+                        log_follow_tail = 0;
+                        log_scroll += 3;
+                        draw_log_popup();
+                    } else if (ev.xbutton.window == win && step == STEP_SETUP)
+                        tos_scroll += 12;
+                } else if (ev.xbutton.button == Button1) {
+                    if (ev.xbutton.window == log_win)
+                        handle_log_click((int)ev.xbutton.x, (int)ev.xbutton.y);
+                    else if (ev.xbutton.window == win)
+                        handle_click((int)ev.xbutton.x, (int)ev.xbutton.y);
+                }
                 draw_all();
             }
         }

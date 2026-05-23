@@ -41,7 +41,8 @@ parted -s "$DISK" mkpart esp fat32 3MiB "${ESP_SIZE_MIB}MiB"
 parted -s "$DISK" set 2 esp on
 parted -s "$DISK" mkpart root ext4 "${ESP_SIZE_MIB}MiB" 100%
 sleep 2
-partprobe "$DISK" 2>/dev/null || true
+echo "[br8-install] partprobe $DISK"
+timeout 60 partprobe "$DISK" 2>/dev/null || partprobe "$DISK" 2>/dev/null || true
 
 ESP_PART="${DISK}2"
 ROOT_PART="${DISK}3"
@@ -49,9 +50,13 @@ ROOT_PART="${DISK}3"
 [[ -b "$ROOT_PART" ]] || ROOT_PART="${DISK}p3"
 [[ -b "$ESP_PART" && -b "$ROOT_PART" ]] || fail "partition layout failed"
 
-status 15 "Formatting…"
+status 14 "Formatting EFI (vfat)…"
+echo "[br8-install] mkfs.fat on $ESP_PART"
 mkfs.fat -F32 -n BACKROOT8EFI "$ESP_PART"
+status 17 "Formatting root (ext4, may take a few minutes)…"
+echo "[br8-install] mkfs.ext4 on $ROOT_PART"
 mkfs.ext4 -F -L Backroot8 "$ROOT_PART"
+echo "[br8-install] format complete"
 
 status 25 "Mounting target…"
 mkdir -p "$TARGET" "$ESP_MOUNT"
