@@ -12,6 +12,8 @@ PACKAGES_FILE="$ROOT/packages.backroot8.txt"
 log() { echo "[backroot8-root] $*"; }
 
 cleanup_mounts() {
+    sudo umount "$ROOTFS/var/cache/pacman/pkg" 2>/dev/null || true
+    sudo umount "$ROOTFS" 2>/dev/null || true
     sudo umount -R "$ROOTFS/dev/pts" 2>/dev/null || true
     sudo umount -R "$ROOTFS/dev" 2>/dev/null || true
     sudo umount -R "$ROOTFS/proc" 2>/dev/null || true
@@ -59,6 +61,8 @@ mount_if -t devpts devpts "$ROOTFS/dev/pts"
 PKG_CACHE="/tmp/backroot8-pacman-pkg"
 mkdir -p "$PKG_CACHE" "$ROOTFS/var/cache/pacman/pkg"
 mount_if --bind "$PKG_CACHE" "$ROOTFS/var/cache/pacman/pkg"
+# pacman requires / to be a mount point for free-space checks
+mount_if --bind "$ROOTFS" "$ROOTFS"
 
 mapfile -t BR8_PACKAGES < <(grep -vE '^\s*($|#)' "$PACKAGES_FILE")
 
