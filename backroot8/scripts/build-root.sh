@@ -45,7 +45,7 @@ sed -i 's/^#Server/Server/' "$ROOTFS/etc/pacman.d/mirrorlist" 2>/dev/null || tru
 
 sed -i 's/^#DisableSandbox.*/DisableSandbox/' "$ROOTFS/etc/pacman.conf" 2>/dev/null || true
 grep -q '^DisableSandbox' "$ROOTFS/etc/pacman.conf" || \
-    sed -i '/^\[options\]/a Disable:disableSandbox' "$ROOTFS/etc/pacman.conf"
+    sed -i '/^\[options\]/a DisableSandbox' "$ROOTFS/etc/pacman.conf"
 
 mount_if() { mountpoint -q "$2" || mount "$@"; }
 mount_if --bind /dev "$ROOTFS/dev"
@@ -56,14 +56,19 @@ mkdir -p "$ROOTFS/dev/pts"
 mount_if -t devpts devpts "$ROOTFS/dev/pts"
 [[ -f /etc/resolv.conf ]] && cp /etc/resolv.conf "$ROOTFS/etc/resolv.conf"
 
+PKG_CACHE="/tmp/backroot8-pacman-pkg"
+mkdir -p "$PKG_CACHE" "$ROOTFS/var/cache/pacman/pkg"
+mount_if --bind "$PKG_CACHE" "$ROOTFS/var/cache/pacman/pkg"
+
 mapfile -t BR8_PACKAGES < <(grep -vE '^\s*($|#)' "$PACKAGES_FILE")
 
 log "Installing Arch packages (${#BR8_PACKAGES[@]} entries)..."
 arch-chroot "$ROOTFS" /bin/bash -eux <<CHROOT
+mkdir -p /var/cache/pacman/pkg
 pacman-key --init
 pacman-key --populate archlinux
 pacman -Sy --noconfirm
-pacman -S --noconfirm --needed ${BR8_PACKAGES[*]}
+pacman -S --noconfirm --needed --disable-download-timeout ${BR8_PACKAGES[*]}
 
 echo "en_US.UTF-8 UTF-8" >> /etc/locale.gen
 locale-gen
