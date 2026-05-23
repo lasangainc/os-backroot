@@ -1413,6 +1413,7 @@ int main(void) {
     visual = DefaultVisual(dpy, screen);
     xft_cmap = DefaultColormap(dpy, screen);
     static const char *const font_names[] = {
+        "Segoe UI-10:antialias=true:hinting=true",
         "sans-serif-10:antialias=true:hinting=true",
         "DejaVu Sans-10:antialias=true",
         "Liberation Sans-10:antialias=true",
