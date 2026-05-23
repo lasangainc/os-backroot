@@ -27,8 +27,20 @@ PANEL_PID=$!
 # Start menu overlay (Home / Apps launcher)
 ( while true; do /usr/local/bin/br8-start; sleep 1; done ) &
 
-# Default terminal at root (xterm)
-xterm -fa Monospace -fs 11 -bg "#1a1a22" -fg "#e8e8ec" -title root@Backroot8 -e /bin/bash -l &
+# Live USB/ISO: install wizard (metro window)
+if /usr/lib/backroot8/is-live-boot.sh; then
+    /usr/local/bin/br8-install &
+fi
+
+# First boot after install: OOBE (fullscreen metro)
+if [ -f /etc/backroot8/oobe-pending ] && ! /usr/lib/backroot8/is-live-boot.sh; then
+    /usr/local/bin/br8-oobe &
+fi
+
+# Default terminal (skip during live install wizard or OOBE)
+if ! /usr/lib/backroot8/is-live-boot.sh && [ ! -f /etc/backroot8/oobe-pending ]; then
+    xterm -fa Monospace -fs 11 -bg "#1a1a22" -fg "#e8e8ec" -title root@Backroot8 -e /bin/bash -l &
+fi
 
 if [ -n "${SPLASH_PID:-}" ]; then
     sleep 1
