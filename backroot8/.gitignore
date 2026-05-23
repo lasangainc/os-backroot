@@ -15,7 +15,14 @@ vm/websockify.log
 vm/qemu.log
 vm/serial.log
 vm/build.log
+vm/build-*.log
+vm/build-*.exit
+vm/*-publish.log
+vm/verify-*.log
+vm/novnc.url
+vm/vnc-tunnel.pid
 vm/screenshot.png
+vm/archlinux-bootstrap.tar.zst
 src/br8-wm/br8-wm
 src/br8-panel/br8-panel
 src/backroot-hello/backroot-hello

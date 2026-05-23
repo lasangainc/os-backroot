@@ -8,7 +8,7 @@ A minimal desktop environment built from scratch on **Arch Linux** with the prec
 
 - Custom window manager (`br8-wm`): draggable windows, minimize, maximize, close
 - Close button: elongated **X** inside a **red square** border
-- Right-click desktop → **New terminal at root** or **Dolphin file explorer**
+- Right-click desktop → **New terminal** or **file manager** (pcmanfm)
 - Window titles show the app name, centered in the title bar
 - Taskbar shows open apps with icons (click to focus)
 - Transparent taskbar (`br8-panel`) — alpha blend only, **no blur**
@@ -45,7 +45,7 @@ See [RELEASE-MILESTONE1.md](RELEASE-MILESTONE1.md) for USB writing and iteration
 | Session, overlay (`rootfs-overlay/`) | same |
 | New Arch package | edit `packages.backroot8.txt`, then same |
 
-`build-rootfs.sh` is a deprecated alias for `build-root.sh`.
+`build-rootfs.sh` only prints a deprecation notice and runs `build-root.sh` (use `build-iso.sh` for the bootable image).
 
 ## Project layout
 

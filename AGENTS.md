@@ -1,31 +1,30 @@
 # AGENTS.md — Backroot 8
 
-Guide for AI agents working on **os-backroot** / **Backroot 8**: a minimal X11 desktop on Arch Linux, developed and tested in QEMU.
+Guide for AI agents working on **os-backroot** / **Backroot 8**: a minimal X11 desktop on Arch Linux, developed and tested by booting the **live ISO** in QEMU.
 
 ## Project summary
 
 | Item | Detail |
 |------|--------|
-| **Goal** | Linux distro with custom DE styled to look like Windows 8, built on Arch with precompiled `linux` kernel |
+| **Goal** | Linux distro with custom DE on Arch (`linux` kernel package) |
 | **WM** | `br8-wm` — C, Xlib only |
 | **Panel** | `br8-panel` — C, Xlib only |
 | **Session** | `startx` → `xinitrc` → panel + xterm + `exec br8-wm` |
 | **Default branch** | `main` |
 | **Feature work** | `cursor/<name>-4238` (cloud agent convention) |
 
-All product code lives under **`backroot8/`**. Repo root is a thin pointer (`README.md` → `backroot8/README.md`).
+All product code lives under **`backroot8/`**. Repo root points to [`backroot8/README.md`](backroot8/README.md).
 
 ## Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│  QEMU (kernel+initrd direct boot, disk = rootfs)        │
+│  QEMU boots vm/backroot8-live.iso (BIOS/UEFI hybrid)  │
 │  ┌───────────────────────────────────────────────────┐  │
-│  │ Xorg :0                                           │  │
-│  │  root                                             │  │
+│  │  initramfs: squashfs root + tmpfs overlay (live)  │  │
+│  │  Xorg :0 (modesetting on QEMU -vga std)           │  │
 │  │   ├── br8-panel (override_redirect, bottom)       │  │
-│  │   ├── br8-wm manages frames per app window        │  │
-│  │   │     frame → title, buttons, reparented client │  │
+│  │   ├── br8-wm — framed client windows              │  │
 │  │   └── xterm / other clients                       │  │
 │  └───────────────────────────────────────────────────┘  │
 │  systemd: backroot8-desktop.service → startx            │
@@ -46,29 +45,29 @@ All product code lives under **`backroot8/`**. Repo root is a thin pointer (`REA
 | `_BR8_START_OPEN` | Panel / br8-start | CARDINAL `0/1` — start menu visible |
 | `_NET_CLIENT_LIST` | WM on root | EWMH client list |
 
-**Taskbar restore:** Panel sets `_BR8_ACTIVATE` on root **and** `XMapWindow`/`XMapSubwindows` on the frame. WM handles `PropertyNotify` on root. Do **not** rely on `ClientMessage` to root alone — it often does not reach the WM.
+**Taskbar restore:** Panel sets `_BR8_ACTIVATE` on root **and** `XMapWindow`/`XMapSubwindows` on the frame. WM handles `PropertyNotify` on root. Do **not** rely on `ClientMessage` to root alone.
 
-**Metro Charms:** Pointer at the right screen edge (8px) opens a black strip with **Home** (start emblem) and **Close app**, plus a bottom-left clock overlay. Bottom swipe still returns to Start. Corner-to-home is removed.
-
-**Minimize / restore:** Never `add_client()` on an existing frame or chrome window — that caused stacked title bars. `is_our_chrome()` must use valid `XQueryTree` children pointers (never `NULL` for children).
+**Minimize / restore:** Never `add_client()` on an existing frame or chrome window. `is_our_chrome()` must use valid `XQueryTree` children pointers (never `NULL` for children).
 
 ## Directory map
 
 ```
 backroot8/
-├── src/br8-wm/br8-wm.c      # Window manager
-├── src/br8-panel/br8-panel.c  # Taskbar
-├── rootfs-overlay/            # Copied into disk at build time
-│   ├── etc/X11/xinit/xinitrc
-│   └── etc/systemd/system/backroot8-desktop.service
+├── src/br8-wm/              # Window manager
+├── src/br8-panel/           # Taskbar
+├── rootfs-overlay/          # Session, initcpio hooks, systemd units
+├── packages.backroot8.txt   # Pacman list for live rootfs
 ├── scripts/
-│   ├── build-rootfs.sh        # Arch bootstrap → vm/backroot8.img
-│   ├── run-vm.sh              # QEMU + VNC
-│   └── run-vm-gui.sh          # run-vm + websockify/noVNC :6080
-└── vm/                        # Gitignored artifacts (see .gitignore)
-    ├── backroot8.img          # ~4GB ext4 whole-disk image
-    ├── vmlinuz-linux          # Extracted for QEMU -kernel boot
-    └── initramfs-linux.img
+│   ├── install-iso-build-deps.sh  # Host tools (Ubuntu/Debian)
+│   ├── build-root.sh        # vm/rootfs/ (pacstrap + overlay)
+│   ├── build-iso.sh         # vm/backroot8-live.iso
+│   ├── sync-overlay.sh      # Binaries + overlay into rootfs
+│   ├── verify-iso-boot.sh     # Headless QEMU boot test
+│   ├── run-vm.sh            # QEMU from ISO + VNC
+│   └── run-vm-gui.sh        # run-vm + noVNC :6080
+└── vm/                      # Gitignored build artifacts
+    ├── rootfs/
+    └── backroot8-live.iso
 ```
 
 ## Common tasks
@@ -83,17 +82,19 @@ make -C backroot8/src/power-pdf
 
 Requires: `gcc`, `libx11-dev`, `libxft-dev`, `pkg-config`. PowerPDF also needs `poppler-glib` and `cairo`.
 
-### Full disk image (first time / package changes)
+### Live ISO (first time / package or overlay changes)
 
 ```bash
+mkdir -p backroot8/vm
 cd backroot8
-sudo ./scripts/build-rootfs.sh
+sudo ./scripts/install-iso-build-deps.sh   # once on Ubuntu/Debian
+sudo ./scripts/build-root.sh               # vm/rootfs/
+sudo ./scripts/build-iso.sh                # vm/backroot8-live.iso
 ```
 
-- Needs network, `sudo`, ~4GB disk, Arch bootstrap tarball (auto-downloaded).
+- Network + `sudo` required; Arch bootstrap tarball auto-downloads to `vm/`.
 - Chroot uses `DisableSandbox` in `pacman.conf` (Landlock fails on some hosts).
-- Whole-disk ext4 (no GRUB embed); QEMU boots via **`-kernel` / `-initrd`** in `run-vm.sh`.
-- Post-build: `chown` disk image to build user for QEMU.
+- Kernel cmdline `backroot8iso` triggers mkinitcpio hooks in `rootfs-overlay/etc/initcpio/`.
 
 ### Run VM for manual testing
 
@@ -102,30 +103,14 @@ sudo ./scripts/build-rootfs.sh
 ```
 
 Browser: `http://localhost:6080/vnc.html?autoconnect=1&resize=scale`  
-SSH (debug): `ssh -p 2222 root@localhost` password `backroot8`
+SSH: `ssh -p 2222 root@localhost` password `backroot8`
 
 ### Post-task: noVNC for developer testing
 
-When you finish a task (especially WM/panel, overlay, or guest-session changes), ensure the developer can test in the browser:
-
-1. **Goal:** QEMU is running with VNC exposed, and noVNC (websockify) is serving `http://localhost:6080`.
-2. **If already up:** If `./backroot8/scripts/run-vm-gui.sh` (or equivalent QEMU + websockify) is already running and the guest reflects your changes (e.g. after hot-deploy), **do not restart** — leave VM and noVNC as they are.
-3. **If not running:** Start with `./backroot8/scripts/run-vm-gui.sh` (builds disk image first if needed).
-4. **If QEMU must restart** (new image, kernel/overlay change, broken session): use the clean restart steps below, then confirm port 6080 responds.
-5. **In PRs / summaries:** Include the test URL: `http://localhost:6080/vnc.html?autoconnect=1&resize=scale`.
-
-Quick check: `curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:6080/` should return `200` when noVNC is up.
-
-### Hot-deploy binaries into running VM
-
-```bash
-# WM/panel must not be running during scp, or copy fails
-sshpass -p backroot8 ssh -p 2222 root@127.0.0.1 'systemctl stop backroot8-desktop'
-scp backroot8/src/br8-wm/br8-wm backroot8/src/br8-panel/br8-panel root@127.0.0.1:/usr/local/bin/
-ssh -p 2222 root@127.0.0.1 'systemctl start backroot8-desktop'
-```
-
-### Restart VM cleanly
+1. **Goal:** QEMU running with noVNC on port **6080**.
+2. **If already up** and guest reflects your changes (hot-deploy), do not restart unnecessarily.
+3. **If not running:** `./backroot8/scripts/run-vm-gui.sh` (requires existing ISO; build first if missing).
+4. **Restart QEMU** after ISO rebuild or broken session:
 
 ```bash
 pkill -f 'qemu-system-x86_64.*-name backroot8' || true
@@ -133,89 +118,78 @@ rm -f backroot8/vm/qemu.pid backroot8/vm/websockify.pid
 ./backroot8/scripts/run-vm-gui.sh
 ```
 
-Check zombies: `ps` STAT `Z` on qemu PID — remove stale `qemu.pid` before restart (`run-vm.sh` handles this).
+5. In PRs, include the test URL above.
+
+Quick check: `curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:6080/` → `200`.
+
+### Hot-deploy binaries into running VM
+
+```bash
+sshpass -p backroot8 ssh -p 2222 root@127.0.0.1 'systemctl stop backroot8-desktop'
+scp backroot8/src/br8-wm/br8-wm backroot8/src/br8-panel/br8-panel root@127.0.0.1:/usr/local/bin/
+ssh -p 2222 root@127.0.0.1 'systemctl start backroot8-desktop'
+```
 
 ## UI behavior (do not regress)
 
-1. **Title bar:** App name from `_NET_WM_NAME` / `WM_NAME` / `WM_CLASS`, **centered**; buttons on the right. Click/drag title raises the window.
+1. **Title bar:** App name from `_NET_WM_NAME` / `WM_NAME` / `WM_CLASS`, **centered**; buttons on the right.
 2. **Close:** Elongated X inside **red square** border (`draw_close_button`).
-3. **Right-click root:** **New terminal at root** and **Dolphin file explorer**; hovered row is highlighted before click.
-4. **Taskbar:** Slightly transparent (alpha blend), **not blurred**; app badges (class letter / color); click restores minimized windows.
-5. **Minimize:** Unmaps frame; taskbar click must show window again without duplicate decorations.
+3. **Right-click root:** **New terminal** and **file manager** (pcmanfm); hovered row highlighted before click.
+4. **Taskbar:** Slightly transparent (alpha blend), **not blurred**; app badges; click restores minimized windows.
+5. **Minimize:** Unmaps frame; taskbar click must restore without duplicate decorations.
 
 ## Known pitfalls
 
 | Issue | Cause | Fix |
 |-------|--------|-----|
-| Taskbar missing | `br8-panel` crashed on `X_PutImage` for `_NET_WM_ICON` | Use `icon_fallback()`; `XSetErrorHandler(NULL)` |
-| Stacked title bars | `MapRequest` on frame re-wrapped by WM | `is_our_chrome()` + skip `add_client` |
-| WM core dump at boot | `XQueryTree(..., NULL, NULL)` for children | Always pass `&children`, `&nch`, then `XFree` |
-| Taskbar click no-op | `ClientMessage` to root ignored | `_BR8_ACTIVATE` property + direct `XMapWindow` |
-| QEMU permission denied | `backroot8.img` owned by root | `chown` after build; see `build-rootfs.sh` |
-| `xfce4-terminal` broken | libhogweed SONAME skew in image | Prefer `xterm`; run `pacman -Syu` in guest if needed |
-| Panel not in git | Runtime files under `vm/` | Listed in `backroot8/.gitignore` |
+| Taskbar missing | `br8-panel` crashed on bad `_NET_WM_ICON` | `icon_fallback()`; `XSetErrorHandler(NULL)` |
+| Stacked title bars | `MapRequest` on frame re-wrapped | `is_our_chrome()` + skip `add_client` |
+| WM core dump | `XQueryTree(..., NULL, NULL)` | Always pass `&children`, `&nch`, then `XFree` |
+| Taskbar click no-op | `ClientMessage` to root ignored | `_BR8_ACTIVATE` + direct `XMapWindow` |
+| ISO boot hang / no root | busybox `mount` lacks overlay | `backroot8_root` install hook adds `/usr/bin/mount` |
+| Blank desktop in QEMU | `vesa` vs kernel framebuffer | Xorg **modesetting** in `10-vesa.conf` |
+| `xfce4-terminal` broken | SONAME skew | Use `xterm` |
 
 ## Code conventions
 
 - **C / X11:** Minimal dependencies (Xlib only). No compositor, no toolkit.
-- **Scope:** Smallest correct diff; match existing style in `br8-wm.c` / `br8-panel.c`.
-- **Comments:** Only for non-obvious protocol or X11 quirks.
-- **Do not commit:** `vm/*.img`, bootstrap tarball, `qemu.pid`, `websockify.log`, compiled binaries.
-- **Windows 8 styling:** Do not apply Windows 8 visual styling (tiles, metro UI, colors, etc.) unless the developer explicitly requests it in that task.
-
-## systemd session
-
-`backroot8-desktop.service` runs `startx` on tty1. `xinitrc`:
-
-1. Panel loop: `( while true; do br8-panel; sleep 1; done ) &`
-2. Wallpaper via `feh --bg-fill /usr/share/backgrounds/backroot8.jpg` (fallback: solid `#1e2030`)
-3. Optional default `xterm`
-4. `exec br8-wm` (keeps session alive)
-
-`getty@tty1` is disabled when desktop service is enabled (avoid tty/session fight).
-
-## PR / git (cloud agents)
-
-- Branch prefix: `cursor/`
-- Push: `git push -u origin <branch>`
-- Base: `main`
-- Open draft PR when user-facing changes land; reference GUI test URL (port 6080).
+- **Scope:** Smallest correct diff; match existing style.
+- **Do not commit:** `vm/` artifacts, compiled binaries under `src/*/`.
+- **Windows 8 styling:** Only when explicitly requested in the task.
 
 ## Verification checklist
 
-After WM/panel changes:
+After WM/panel or overlay changes:
 
-1. `make` both targets without warnings (fix new warnings).
-2. Deploy to VM or full `build-rootfs.sh` if overlay/systemd changed.
-3. In VNC: drag window, min/max/close, right-click menu (terminal and Dolphin), minimize → taskbar restore.
-4. Open second terminal — two taskbar icons, no crash, single title bar each.
-5. Confirm `br8-panel` stays running: `ps aux | grep br8-panel` in guest.
-6. **Leave noVNC available** for the developer — see [Post-task: noVNC for developer testing](#post-task-novnc-for-developer-testing); do not tear down a working VM/noVNC session without cause.
+1. `make` WM and panel without new warnings.
+2. `sudo ./scripts/build-root.sh && sudo ./scripts/build-iso.sh` if overlay/systemd/initcpio changed; else hot-deploy.
+3. `./scripts/verify-iso-boot.sh` when initramfs or ISO layout changed.
+4. In noVNC: drag, min/max/close, root menu, minimize → taskbar restore; two terminals → two icons.
+5. Leave noVNC up when finishing unless restart is required.
 
 ## References
 
-- User-facing docs: [backroot8/README.md](backroot8/README.md)
-- Arch packages in image: `linux`, `xorg-server`, `xorg-xinit`, `xterm`, `dolphin`, `nettle`, `networkmanager`, `openssh`
-- Active development branch (example): `cursor/backroot-8-4238`
+- [backroot8/README.md](backroot8/README.md) — quick start
+- [backroot8/RELEASE-MILESTONE1.md](backroot8/RELEASE-MILESTONE1.md) — USB, release workflow
+- Packages: `packages.backroot8.txt` (`linux`, `xorg-server`, `xterm`, `pcmanfm`, …)
 
-## Cursor Cloud specific instructions
+## Cursor Cloud
 
-### System dependencies (pre-installed in the update script)
+### Host dependencies
 
-`gcc`, `libx11-dev`, `pkg-config` are already available. The update script installs `qemu-system-x86`, `arch-install-scripts`, `novnc`, `sshpass`, and `zstd` if missing.
+`gcc`, `libx11-dev`, `libxft-dev`, `pkg-config`, `qemu-system-x86`, `arch-install-scripts`, `novnc`, `sshpass`, `zstd` (install script: `install-iso-build-deps.sh`).
 
-### Build & run workflow
+### Workflow
 
-1. **Compile binaries:** `make -C backroot8/src/br8-wm` and `make -C backroot8/src/br8-panel` — both must build with zero warnings.
-2. **First-time ISO build:** `mkdir -p backroot8/vm && cd backroot8 && sudo ./scripts/install-iso-build-deps.sh && sudo ./scripts/build-iso.sh` — creates `vm/backroot8-live.iso`. Requires network for Arch bootstrap tarball. Create `vm/` first (gitignored).
-3. **Start VM + noVNC:** `./backroot8/scripts/run-vm-gui.sh` — boots QEMU from the ISO (VNC :5902) and websockify on port 6080.
-4. **Browser access:** `http://localhost:6080/vnc.html?autoconnect=1&resize=scale`
-5. **End of every task:** Follow [Post-task: noVNC for developer testing](#post-task-novnc-for-developer-testing) so the developer can verify changes in the browser without restarting unnecessarily.
+1. `make -C backroot8/src/br8-wm` and `br8-panel` (zero warnings).
+2. `mkdir -p backroot8/vm && sudo ./scripts/install-iso-build-deps.sh && sudo ./scripts/build-iso.sh`
+3. `./backroot8/scripts/run-vm-gui.sh`
+4. End tasks with noVNC available at port **6080**.
 
-### Gotchas discovered during setup
+### Gotchas
 
-- The Arch guest image needs `xf86-video-vesa` installed for Xorg to render on QEMU's emulated VGA. If the desktop shows only a text console after boot, mount the image and `arch-chroot` to install the driver: `sudo pacman -S --noconfirm xf86-video-vesa`.
-- `/etc/X11/xinit/xinitrc` in the guest must be executable (`chmod +x`), otherwise `startx` silently fails.
-- SSH as root requires `PermitRootLogin yes` in `/etc/ssh/sshd_config` inside the guest; the default Arch config uses `prohibit-password`.
-- No KVM acceleration is available in the Cloud Agent VM (`/dev/kvm` missing); QEMU falls back to TCG software emulation, which is slow but functional.
-- The `build-rootfs.sh` script expects the `backroot8/vm/` directory to already exist before downloading the bootstrap tarball — create it beforehand with `mkdir -p backroot8/vm`.
+- QEMU `-vga std` needs Xorg **modesetting**, not vesa (see `rootfs-overlay/etc/X11/xorg.conf.d/10-vesa.conf`).
+- `xinitrc` must be executable in the guest overlay.
+- Guest SSH: `PermitRootLogin yes` in overlay.
+- No KVM in Cloud Agent VMs — TCG is slow but works.
+- Create `backroot8/vm/` before first bootstrap download.

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-echo "[backroot8] build-rootfs.sh is deprecated (VM disk images removed)." >&2
-echo "Use: sudo ./scripts/build-root.sh   # root filesystem" >&2
-echo "     sudo ./scripts/build-iso.sh    # bootable live ISO" >&2
+# Backward compatibility: old name for build-root.sh (VM disk images removed).
+set -euo pipefail
+echo "[backroot8] build-rootfs.sh is deprecated; use build-root.sh + build-iso.sh." >&2
 exec "$(cd "$(dirname "$0")" && pwd)/build-root.sh" "$@"
