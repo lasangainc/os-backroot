@@ -6,7 +6,9 @@ set -euo pipefail
 DISK="${1:-}"
 STATUS_DIR="/run/br8-install"
 STATUS_FILE="$STATUS_DIR/status"
-TARGET="/mnt/br8-target"
+# Use tmpfs under /run, not /mnt — overlay upper entries under /mnt can
+# shadow real mounts on the live squashfs root and break EFI mounting.
+TARGET="$STATUS_DIR/target"
 ESP_MOUNT="$TARGET/boot/efi"
 LOG="/run/br8-install/install.log"
 ESP_SIZE_MIB=512
@@ -90,10 +92,21 @@ unmount_target_binds() {
     done
 }
 
+cleanup_target_mounts() {
+    local mp
+    unmount_target_binds
+    for mp in "$ESP_MOUNT" "$TARGET" /mnt/br8-target/boot/efi /mnt/br8-target; do
+        mountpoint -q "$mp" 2>/dev/null && umount "$mp" 2>/dev/null || true
+    done
+}
+
 [[ -n "$DISK" && -b "$DISK" ]] || fail "invalid disk $DISK"
 grep -q 'backroot8iso' /proc/cmdline || fail "not a live session"
 
 exec > >(tee -a "$LOG") 2>&1
+
+cleanup_target_mounts
+mkdir -p "$STATUS_DIR"
 
 status 5 "Partitioning disk…"
 wipefs -af "$DISK"
@@ -124,9 +137,10 @@ echo "[br8-install] format complete"
 
 status 25 "Mounting target…"
 mkdir -p "$TARGET"
-mount "$ROOT_PART" "$TARGET" || fail "mount root failed"
+mount -t ext4 "$ROOT_PART" "$TARGET" || fail "mount root failed"
 mkdir -p "$ESP_MOUNT"
-mount "$ESP_PART" "$ESP_MOUNT" || fail "mount EFI failed"
+modprobe vfat 2>/dev/null || true
+mount -t vfat "$ESP_PART" "$ESP_MOUNT" || fail "mount EFI failed"
 
 status 35 "Copying system files…"
 rsync -aAXH \
