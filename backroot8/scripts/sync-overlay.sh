@@ -12,16 +12,24 @@ fi
 
 log() { echo "[sync-overlay] $*"; }
 
+run_make() {
+    if [[ -n "${SUDO_USER:-}" ]] && [[ "$SUDO_USER" != "root" ]]; then
+        sudo -u "$SUDO_USER" "$@"
+    else
+        "$@"
+    fi
+}
+
 log "Building desktop binaries..."
-"$ROOT/scripts/prepare-bootscreen.sh"
-python3 "$ROOT/scripts/prepare-neoemblem.py" \
+run_make "$ROOT/scripts/prepare-bootscreen.sh"
+run_make python3 "$ROOT/scripts/prepare-neoemblem.py" \
     "$ROOT/assets/neoemblem-source.txt" "$ROOT/assets/neoemblem.txt"
-make -C "$ROOT/src/br8-panel" emblem.h
-make -C "$ROOT/src/br8-wm" clean br8-wm
-make -C "$ROOT/src/br8-panel" clean br8-panel
-make -C "$ROOT/src/br8-start" clean br8-start
-make -C "$ROOT/src/backroot-hello" clean backroot-hello
-make -C "$ROOT/src/power-pdf" clean powerpdf
+run_make make -C "$ROOT/src/br8-panel" emblem.h
+run_make make -C "$ROOT/src/br8-wm" clean br8-wm
+run_make make -C "$ROOT/src/br8-panel" clean br8-panel
+run_make make -C "$ROOT/src/br8-start" clean br8-start
+run_make make -C "$ROOT/src/backroot-hello" clean backroot-hello
+run_make make -C "$ROOT/src/power-pdf" clean powerpdf
 
 install -Dm755 "$ROOT/src/br8-wm/br8-wm" "$DEST/usr/local/bin/br8-wm"
 install -Dm755 "$ROOT/src/br8-panel/br8-panel" "$DEST/usr/local/bin/br8-panel"

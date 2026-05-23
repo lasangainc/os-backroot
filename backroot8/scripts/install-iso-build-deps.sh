@@ -17,6 +17,12 @@ apt-get install -y -qq \
     arch-install-scripts \
     zstd \
     curl \
-    unzip
+    unzip \
+    libcairo2-dev \
+    libpoppler-glib-dev \
+    libfreetype-dev \
+    libx11-dev \
+    libxft-dev \
+    pkg-config
 
 echo "[backroot8] ISO build dependencies installed."
