@@ -13,14 +13,21 @@
 #include <sys/wait.h>
 #include <ctype.h>
 #include <errno.h>
+#include <time.h>
+
+#define STB_IMAGE_IMPLEMENTATION
+#define STBI_NO_SIMD
+#include "stb_image.h"
 
 #define WIN_W 920
+#define BANNER_PATH "/usr/share/backroot8/install-banner.png"
+#define DISK_LIST_SCRIPT "/usr/lib/backroot8/br8-list-install-disks.sh"
 #define WIN_H 640
 #define PAD 28
 #define BANNER_H 220
 #define BTN_H 44
 #define BTN_W 160
-#define ROW_H 36
+#define ROW_H 44
 #define MAX_DISKS 24
 #define TOS_LINES 8
 
@@ -50,12 +57,15 @@ typedef enum {
     STEP_WELCOME,
     STEP_SETUP,
     STEP_INSTALLING,
-    STEP_DONE
+    STEP_ALL_DONE
 } Step;
 
 typedef struct {
     char dev[64];
-    char label[128];
+    char size[32];
+    char model[128];
+    char vendor[64];
+    char line[384];
 } DiskEntry;
 
 static Display *dpy;
@@ -73,6 +83,10 @@ static int tos_scroll;
 static int start_hover, install_hover, back_hover;
 static int install_pid;
 static int win_x, win_y;
+static Pixmap banner_pm;
+static int banner_w, banner_h;
+static int banner_ready;
+static time_t shutdown_at;
 
 static const char *tos_placeholder =
     "Backroot 8 — Terms of Service (placeholder)\n\n"
@@ -186,34 +200,122 @@ static int is_live_boot(void) {
 }
 
 static void load_disks(void) {
-    FILE *fp = popen("lsblk -d -n -o NAME,SIZE,TYPE,RM 2>/dev/null", "r");
-    char line[256];
+    FILE *fp = popen(DISK_LIST_SCRIPT " 2>/dev/null", "r");
+    char row[512];
     n_disks = 0;
     disk_sel = 0;
 
     if (!fp)
         return;
-    while (fgets(line, sizeof line, fp) && n_disks < MAX_DISKS) {
-        char name[64], size[32], type[16], rm[8];
-        if (sscanf(line, "%63s %31s %15s %7s", name, size, type, rm) < 3)
+    while (fgets(row, sizeof row, fp) && n_disks < MAX_DISKS) {
+        char *dev = row;
+        char *size = strchr(row, '\t');
+        if (!size)
             continue;
-        if (strcmp(type, "disk") != 0)
+        *size++ = '\0';
+        char *model = strchr(size, '\t');
+        if (!model)
             continue;
-        if (name[0] == 'l' && name[1] == 'o' && name[2] == 'o' && name[3] == 'p')
-            continue;
-        if (name[0] == 'r' && name[1] == 'a' && name[2] == 'm')
-            continue;
-        snprintf(disks[n_disks].dev, sizeof disks[n_disks].dev, "/dev/%s", name);
-        snprintf(disks[n_disks].label, sizeof disks[n_disks].label,
-            "/dev/%s  (%s)", name, size);
+        *model++ = '\0';
+        char *vendor = strchr(model, '\t');
+        if (vendor) {
+            *vendor++ = '\0';
+            vendor[strcspn(vendor, "\r\n")] = '\0';
+        }
+        size[strcspn(size, "\r\n")] = '\0';
+        model[strcspn(model, "\r\n")] = '\0';
+        dev[strcspn(dev, "\r\n")] = '\0';
+
+        snprintf(disks[n_disks].dev, sizeof disks[n_disks].dev, "%s", dev);
+        snprintf(disks[n_disks].size, sizeof disks[n_disks].size, "%s", size);
+        snprintf(disks[n_disks].model, sizeof disks[n_disks].model, "%s", model);
+        if (vendor)
+            snprintf(disks[n_disks].vendor, sizeof disks[n_disks].vendor, "%s", vendor);
+        else
+            disks[n_disks].vendor[0] = '\0';
+
+        if (disks[n_disks].vendor[0])
+            snprintf(disks[n_disks].line, sizeof disks[n_disks].line,
+                "%s %s — %s — %s", disks[n_disks].vendor, disks[n_disks].model,
+                disks[n_disks].dev, disks[n_disks].size);
+        else
+            snprintf(disks[n_disks].line, sizeof disks[n_disks].line,
+                "%s — %s — %s", disks[n_disks].model, disks[n_disks].dev, disks[n_disks].size);
         n_disks++;
     }
     pclose(fp);
     if (n_disks == 0) {
         snprintf(disks[0].dev, sizeof disks[0].dev, "/dev/sda");
-        snprintf(disks[0].label, sizeof disks[0].label, "/dev/sda  (no disks detected)");
+        snprintf(disks[0].size, sizeof disks[0].size, "unknown");
+        snprintf(disks[0].model, sizeof disks[0].model, "No disks detected");
+        snprintf(disks[0].line, sizeof disks[0].line, "No disks detected — /dev/sda");
         n_disks = 1;
     }
+}
+
+static void load_banner(void) {
+    int iw, ih, comp;
+    unsigned char *img;
+    int max_w = WIN_W - PAD * 2;
+    int max_h = BANNER_H;
+
+    if (banner_ready)
+        return;
+    img = stbi_load(BANNER_PATH, &iw, &ih, &comp, 4);
+    if (!img || iw <= 0 || ih <= 0)
+        return;
+
+    double scale = (double)max_w / (double)iw;
+    if ((double)max_h / (double)ih < scale)
+        scale = (double)max_h / (double)ih;
+    banner_w = (int)(iw * scale);
+    banner_h = (int)(ih * scale);
+    if (banner_w < 1)
+        banner_w = 1;
+    if (banner_h < 1)
+        banner_h = 1;
+
+    banner_pm = XCreatePixmap(dpy, win, banner_w, banner_h, DefaultDepth(dpy, screen));
+    if (!banner_pm) {
+        stbi_image_free(img);
+        return;
+    }
+    XImage *xi = XCreateImage(dpy, visual, DefaultDepth(dpy, screen), ZPixmap, 0,
+        NULL, (unsigned int)banner_w, (unsigned int)banner_h, 32, 0);
+    if (!xi) {
+        XFreePixmap(dpy, banner_pm);
+        banner_pm = 0;
+        stbi_image_free(img);
+        return;
+    }
+    xi->data = (char *)malloc((size_t)banner_w * (size_t)banner_h * 4);
+    if (!xi->data) {
+        XDestroyImage(xi);
+        XFreePixmap(dpy, banner_pm);
+        banner_pm = 0;
+        stbi_image_free(img);
+        return;
+    }
+    for (int y = 0; y < banner_h; y++) {
+        int sy = (int)((double)y / scale);
+        if (sy >= ih)
+            sy = ih - 1;
+        for (int x = 0; x < banner_w; x++) {
+            int sx = (int)((double)x / scale);
+            if (sx >= iw)
+                sx = iw - 1;
+            int i = (sy * iw + sx) * 4;
+            unsigned long pixel = ((unsigned long)img[i] << 16) |
+                ((unsigned long)img[i + 1] << 8) | (unsigned long)img[i + 2];
+            XPutPixel(xi, x, y, pixel);
+        }
+    }
+    GC bgc = XCreateGC(dpy, banner_pm, 0, NULL);
+    XPutImage(dpy, banner_pm, bgc, xi, 0, 0, 0, 0, (unsigned int)banner_w, (unsigned int)banner_h);
+    XFreeGC(dpy, bgc);
+    XDestroyImage(xi);
+    stbi_image_free(img);
+    banner_ready = 1;
 }
 
 static void draw_metro_btn(int x, int y, int w, int h, const char *label, int hover, int inverse) {
@@ -255,11 +357,20 @@ static void draw_metro_btn(int x, int y, int w, int h, const char *label, int ho
 static void draw_banner(int y0) {
     int x0 = PAD;
     int w = WIN_W - PAD * 2;
+
+    load_banner();
+    if (banner_ready && banner_pm) {
+        int dx = x0 + (w - banner_w) / 2;
+        int dy = y0 + (BANNER_H - banner_h) / 2;
+        XSetForeground(dpy, gc, rgb(30, 50, 80));
+        XFillRectangle(dpy, win, gc, x0, y0, w, BANNER_H);
+        XCopyArea(dpy, banner_pm, win, gc, 0, 0, banner_w, banner_h, dx, dy);
+        return;
+    }
+
     XSetForeground(dpy, gc, rgb(40, 70, 110));
     XFillRectangle(dpy, win, gc, x0, y0, w, BANNER_H);
-    XSetForeground(dpy, gc, rgb(80, 130, 180));
-    XDrawRectangle(dpy, win, gc, x0, y0, w - 1, BANNER_H - 1);
-    const char *ph = "Install banner (placeholder)";
+    const char *ph = "Backroot 8";
     int tw = text_width(font_head, ph);
     xft_draw(win, x0 + (w - tw) / 2, y0 + BANNER_H / 2,
         ph, COL_MUTED_R, COL_MUTED_G, COL_MUTED_B, font_head);
@@ -338,7 +449,7 @@ static void draw_setup(void) {
             XFillRectangle(dpy, win, gc, x0 + 2, ry + 2, w - 4, ROW_H - 4);
         }
         xft_draw(win, x0 + 12, ry + text_baseline(ROW_H, font_body),
-            disks[i].label, COL_TEXT_R, COL_TEXT_G, COL_TEXT_B, font_body);
+            disks[i].line, COL_TEXT_R, COL_TEXT_G, COL_TEXT_B, font_body);
     }
     y += list_h + 20;
 
@@ -404,19 +515,33 @@ static void draw_installing(void) {
     xft_draw(win, PAD, bar_y + bar_h + 24, msg,
         COL_MUTED_R, COL_MUTED_G, COL_MUTED_B, font_body);
 
-    if (st == 2)
-        step = STEP_DONE;
-    else if (st < 0)
-        step = STEP_DONE;
+    if (st == 2) {
+        step = STEP_ALL_DONE;
+        shutdown_at = time(NULL) + 10;
+    } else if (st < 0) {
+        step = STEP_ALL_DONE;
+        shutdown_at = time(NULL) + 10;
+    }
 }
 
-static void draw_done(void) {
-    xft_draw(win, PAD, WIN_H / 2 - 40,
-        "Installation complete. Restarting…",
-        COL_TEXT_R, COL_TEXT_G, COL_TEXT_B, font_title);
-    xft_draw(win, PAD, WIN_H / 2 + 10,
-        "Your PC will boot from the installed disk.",
-        COL_MUTED_R, COL_MUTED_G, COL_MUTED_B, font_body);
+static void draw_all_done(void) {
+    int left = 10;
+    if (shutdown_at > 0)
+        left = (int)(shutdown_at - time(NULL));
+    if (left < 0)
+        left = 0;
+
+    const char *title = "All done!";
+    int tw = text_width(font_title, title);
+    xft_draw(win, (WIN_W - tw) / 2, WIN_H / 2 - 50,
+        title, COL_TEXT_R, COL_TEXT_G, COL_TEXT_B, font_title);
+
+    char sub[128];
+    snprintf(sub, sizeof sub,
+        "Your computer will shut down in %d seconds", left);
+    int sw = text_width(font_body, sub);
+    xft_draw(win, (WIN_W - sw) / 2, WIN_H / 2 + 10,
+        sub, COL_MUTED_R, COL_MUTED_G, COL_MUTED_B, font_body);
 }
 
 static void draw_all(void) {
@@ -433,8 +558,8 @@ static void draw_all(void) {
     case STEP_INSTALLING:
         draw_installing();
         break;
-    case STEP_DONE:
-        draw_done();
+    case STEP_ALL_DONE:
+        draw_all_done();
         break;
     }
 }
@@ -482,15 +607,16 @@ static void start_install(void) {
     step = STEP_INSTALLING;
 }
 
-static void maybe_reboot(void) {
-    static int reboot_scheduled;
-    if (reboot_scheduled)
+static void maybe_shutdown(void) {
+    static int shutdown_done;
+    if (shutdown_done || shutdown_at <= 0)
         return;
-    reboot_scheduled = 1;
+    if (time(NULL) < shutdown_at)
+        return;
+    shutdown_done = 1;
     if (fork() == 0) {
-        sleep(3);
-        execl("/usr/bin/systemctl", "systemctl", "reboot", (char *)NULL);
-        execl("/sbin/reboot", "reboot", (char *)NULL);
+        execl("/usr/bin/systemctl", "systemctl", "poweroff", (char *)NULL);
+        execl("/sbin/poweroff", "poweroff", (char *)NULL);
         _exit(1);
     }
 }
@@ -584,16 +710,15 @@ int main(void) {
 
     int xfd = ConnectionNumber(dpy);
     while (1) {
-        if (step == STEP_INSTALLING || step == STEP_DONE) {
-            struct timeval tv = { .tv_sec = 0, .tv_usec = 400000 };
+        if (step == STEP_INSTALLING || step == STEP_ALL_DONE) {
+            struct timeval tv = { .tv_sec = 1, .tv_usec = 0 };
             fd_set fds;
             FD_ZERO(&fds);
             FD_SET(xfd, &fds);
             select(xfd + 1, &fds, NULL, NULL, &tv);
-            if (step == STEP_INSTALLING)
-                draw_all();
-            if (step == STEP_DONE)
-                maybe_reboot();
+            draw_all();
+            if (step == STEP_ALL_DONE)
+                maybe_shutdown();
         } else {
             struct timeval tv = { .tv_sec = 0, .tv_usec = 200000 };
             fd_set fds;

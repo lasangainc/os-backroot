@@ -32,3 +32,5 @@ parted
 grub
 arch-install-scripts
 e2fsprogs
+dosfstools
+efivar

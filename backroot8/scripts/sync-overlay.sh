@@ -22,6 +22,7 @@ run_make() {
 
 log "Building desktop binaries..."
 run_make "$ROOT/scripts/prepare-bootscreen.sh"
+run_make "$ROOT/scripts/prepare-install-banner.sh"
 run_make python3 "$ROOT/scripts/prepare-neoemblem.py" \
     "$ROOT/assets/neoemblem-source.txt" "$ROOT/assets/neoemblem.txt"
 run_make make -C "$ROOT/src/br8-panel" emblem.h
@@ -46,6 +47,8 @@ install -Dm755 "$ROOT/rootfs-overlay/usr/lib/backroot8/br8-install-to-disk.sh" \
     "$DEST/usr/lib/backroot8/br8-install-to-disk.sh"
 install -Dm755 "$ROOT/rootfs-overlay/usr/lib/backroot8/br8-oobe-setup.sh" \
     "$DEST/usr/lib/backroot8/br8-oobe-setup.sh"
+install -Dm755 "$ROOT/rootfs-overlay/usr/lib/backroot8/br8-list-install-disks.sh" \
+    "$DEST/usr/lib/backroot8/br8-list-install-disks.sh"
 
 install -Dm644 "$ROOT/rootfs-overlay/usr/share/backroot/README" \
     "$DEST/usr/share/backroot/README"
@@ -58,7 +61,7 @@ install -Dm644 "$ROOT/rootfs-overlay/usr/share/backgrounds/backroot8.jpg" \
     "$DEST/usr/share/backgrounds/backroot8.jpg"
 install -Dm644 "$ROOT/rootfs-overlay/usr/share/backroot8/bootscreen.png" \
     "$DEST/usr/share/backroot8/bootscreen.png"
-install -Dm644 "$ROOT/rootfs-overlay/usr/share/backroot8/bootscreen.png" \
+install -Dm644 "$ROOT/rootfs-overlay/usr/share/backroot8/install-banner.png" \
     "$DEST/usr/share/backroot8/install-banner.png"
 install -Dm644 "$ROOT/rootfs-overlay/usr/share/backroot8/default-user.png" \
     "$DEST/usr/share/backroot8/default-user.png"

@@ -1,6 +1,6 @@
 ROOT = ../..
 CC = gcc
-CFLAGS = -Wall -Wextra -O2 $(shell pkg-config --cflags xft 2>/dev/null)
+CFLAGS = -Wall -Wextra -O2 -I../br8-start $(shell pkg-config --cflags xft 2>/dev/null)
 LDFLAGS = -lX11 -lm $(shell pkg-config --libs xft 2>/dev/null)
 
 br8-install: br8-install.c
