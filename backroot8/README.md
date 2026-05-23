@@ -2,6 +2,8 @@
 
 A minimal desktop environment built from scratch on **Arch Linux** with the precompiled **`linux`** kernel package.
 
+**Milestone 1** ships as a bootable live ISO (`vm/backroot8-live.iso`) for USB, optical media, and QEMU.
+
 ## Features
 
 - Custom window manager (`br8-wm`): draggable windows, minimize, maximize, close
@@ -11,25 +13,39 @@ A minimal desktop environment built from scratch on **Arch Linux** with the prec
 - Taskbar shows open apps with icons (click to focus)
 - Transparent taskbar (`br8-panel`) — alpha blend only, **no blur**
 - Default wallpaper at `/usr/share/backgrounds/backroot8.jpg` (via `feh`)
+- PowerPDF viewer and Backroot Hello demo app
 - Arch precompiled kernel (`linux` package from official repos)
 
-## Quick start (VM)
+## Quick start
 
 ```bash
-# Build disk image (~4GB, requires network)
-sudo ./scripts/build-rootfs.sh
+# Host tools (Ubuntu/Debian, once)
+sudo ./scripts/install-iso-build-deps.sh
 
-# Start VM + open GUI in browser
+# Build live ISO (network + sudo; first run downloads Arch bootstrap)
+sudo ./scripts/build-iso.sh
+
+# Boot ISO in QEMU + browser GUI
 ./scripts/run-vm-gui.sh
 ```
 
-**Use the GUI in your browser** (not SSH):
+**Browser (Cursor: forward port 6080):**
 
 **http://localhost:6080/vnc.html?autoconnect=1&resize=scale**
 
-In Cursor: open **Ports**, forward **6080**, then click the forwarded link.
+Credentials in the live system: `root` / `backroot8`
 
-Optional: connect a VNC app to `localhost:5902`. The desktop starts automatically on boot (no login needed).
+See [RELEASE-MILESTONE1.md](RELEASE-MILESTONE1.md) for USB writing and iteration workflow.
+
+## Iterate and rebuild
+
+| Change | Command |
+|--------|---------|
+| WM, panel, apps (`src/`) | `sudo ./scripts/build-root.sh` then `sudo ./scripts/build-iso.sh` |
+| Session, overlay (`rootfs-overlay/`) | same |
+| New Arch package | edit `packages.backroot8.txt`, then same |
+
+`build-rootfs.sh` is a deprecated alias for `build-root.sh`.
 
 ## Project layout
 
@@ -37,14 +53,19 @@ Optional: connect a VNC app to `localhost:5902`. The desktop starts automaticall
 |------|---------|
 | `src/br8-wm/` | Window manager (X11) |
 | `src/br8-panel/` | Taskbar |
-| `rootfs-overlay/` | Session and motd |
-| `scripts/build-rootfs.sh` | Arch bootstrap + package install |
-| `scripts/run-vm.sh` | QEMU headless + VNC |
-| `vm/backroot8.img` | Bootable disk image |
+| `src/br8-start/` | Start menu overlay |
+| `src/power-pdf/` | PowerPDF viewer |
+| `rootfs-overlay/` | Session, initcpio ISO hook, systemd units |
+| `packages.backroot8.txt` | Shared pacman package list |
+| `scripts/build-iso.sh` | Build `vm/backroot8-live.iso` |
+| `scripts/build-root.sh` | Populate `vm/rootfs/` |
+| `scripts/run-vm-gui.sh` | QEMU (ISO) + noVNC |
+| `vm/backroot8-live.iso` | Bootable live image (gitignored) |
 
-## Rebuild desktop binaries only
+## Rebuild desktop binaries only (on host)
 
 ```bash
 make -C src/br8-wm && make -C src/br8-panel
-sudo cp src/br8-wm/br8-wm vm/mnt/usr/local/bin/   # when mounted
+# Then refresh rootfs/ISO:
+sudo ./scripts/build-root.sh && sudo ./scripts/build-iso.sh
 ```

@@ -1,8 +1,14 @@
 vm/*.img
+vm/*.iso
 vm/*.tar.zst
+vm/rootfs/
+vm/iso-staging/
+vm/backroot8-root.img
 vm/mnt/
 vm/vmlinuz-linux
 vm/initramfs-linux.img
+vm/iso-boot-serial.log
+vm/iso-boot-qemu.log
 vm/qemu.pid
 vm/websockify.pid
 vm/websockify.log

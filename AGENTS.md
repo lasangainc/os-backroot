@@ -207,8 +207,8 @@ After WM/panel changes:
 ### Build & run workflow
 
 1. **Compile binaries:** `make -C backroot8/src/br8-wm` and `make -C backroot8/src/br8-panel` — both must build with zero warnings.
-2. **First-time image build:** `mkdir -p backroot8/vm && cd backroot8 && sudo ./scripts/build-rootfs.sh` — creates a ~4 GB Arch ext4 disk image under `backroot8/vm/`. Requires network for Arch bootstrap tarball download. The `vm/` directory must exist before running the script (it is gitignored).
-3. **Start VM + noVNC:** `./backroot8/scripts/run-vm-gui.sh` — boots QEMU (VNC :5902) and starts websockify on port 6080.
+2. **First-time ISO build:** `mkdir -p backroot8/vm && cd backroot8 && sudo ./scripts/install-iso-build-deps.sh && sudo ./scripts/build-iso.sh` — creates `vm/backroot8-live.iso`. Requires network for Arch bootstrap tarball. Create `vm/` first (gitignored).
+3. **Start VM + noVNC:** `./backroot8/scripts/run-vm-gui.sh` — boots QEMU from the ISO (VNC :5902) and websockify on port 6080.
 4. **Browser access:** `http://localhost:6080/vnc.html?autoconnect=1&resize=scale`
 5. **End of every task:** Follow [Post-task: noVNC for developer testing](#post-task-novnc-for-developer-testing) so the developer can verify changes in the browser without restarting unnecessarily.
 
