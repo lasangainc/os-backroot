@@ -60,9 +60,10 @@ mkfs.ext4 -F -L Backroot8 "$ROOT_PART" || fail "mkfs.ext4 failed on $ROOT_PART"
 echo "[br8-install] format complete"
 
 status 25 "Mounting target…"
-mkdir -p "$TARGET" "$ESP_MOUNT"
-mount "$ROOT_PART" "$TARGET"
-mount "$ESP_PART" "$ESP_MOUNT"
+mkdir -p "$TARGET"
+mount "$ROOT_PART" "$TARGET" || fail "mount root failed"
+mkdir -p "$ESP_MOUNT"
+mount "$ESP_PART" "$ESP_MOUNT" || fail "mount EFI failed"
 
 status 35 "Copying system files…"
 rsync -aAXH \

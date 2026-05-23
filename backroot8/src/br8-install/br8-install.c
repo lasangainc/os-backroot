@@ -66,7 +66,8 @@ typedef enum {
     STEP_WELCOME,
     STEP_SETUP,
     STEP_INSTALLING,
-    STEP_ALL_DONE
+    STEP_ALL_DONE,
+    STEP_FAILED
 } Step;
 
 typedef struct {
@@ -90,6 +91,7 @@ static int log_visible;
 static int log_scroll;
 static int log_follow_tail = 1;
 static int log_btn_hover, log_close_hover;
+static int shutdown_btn_hover;
 static char log_lines[LOG_MAX_LINES][LOG_COLS];
 static int n_log_lines;
 static Step step = STEP_WELCOME;
@@ -682,10 +684,39 @@ static void draw_installing(void) {
     if (st == 2) {
         step = STEP_ALL_DONE;
         shutdown_at = time(NULL) + 10;
-    } else if (st < 0) {
-        char err[320];
-        snprintf(err, sizeof err, "Installation failed: %s", msg[0] ? msg : "unknown error");
-        xft_draw(win, PAD, bar_y + bar_h + 52, err, COL_WARN_R, COL_WARN_G, COL_WARN_B, font_body);
+    } else if (st < 0)
+        step = STEP_FAILED;
+}
+
+static void do_shutdown(void) {
+    if (fork() == 0) {
+        execl("/usr/bin/systemctl", "systemctl", "poweroff", (char *)NULL);
+        execl("/sbin/poweroff", "poweroff", (char *)NULL);
+        _exit(1);
+    }
+}
+
+static void draw_failed(void) {
+    const char *title = "Oops. That's not good...";
+    const char *sub =
+        "There was a problem installing Backroot 8 on your computer.";
+    int tw = text_width(font_title, title);
+    int sw = text_width(font_body, sub);
+    int cy = WIN_H / 2 - 40;
+
+    xft_draw(win, (WIN_W - tw) / 2, cy,
+        title, COL_TEXT_R, COL_TEXT_G, COL_TEXT_B, font_title);
+    xft_draw(win, (WIN_W - sw) / 2, cy + (font_title ? font_title->height + 24 : 56),
+        sub, COL_MUTED_R, COL_MUTED_G, COL_MUTED_B, font_body);
+
+    int bx = (WIN_W - BTN_W) / 2;
+    int by = WIN_H - PAD - BTN_H;
+    draw_metro_btn(bx, by, BTN_W, BTN_H, "Shut down", shutdown_btn_hover, 1);
+
+    {
+        int obx, oby;
+        install_output_btn(&obx, &oby);
+        draw_metro_btn(obx, oby, LOG_BTN_W, BTN_H, "View output", log_btn_hover, 0);
     }
 }
 
@@ -725,6 +756,9 @@ static void draw_all(void) {
         break;
     case STEP_ALL_DONE:
         draw_all_done();
+        break;
+    case STEP_FAILED:
+        draw_failed();
         break;
     }
 }
@@ -793,14 +827,26 @@ static void handle_log_click(int x, int y) {
         hide_log_popup();
 }
 
+static void failed_shutdown_btn(int *bx, int *by) {
+    *bx = (WIN_W - BTN_W) / 2;
+    *by = WIN_H - PAD - BTN_H;
+}
+
 static void handle_click(int x, int y) {
-    if (step == STEP_INSTALLING) {
+    if (step == STEP_INSTALLING || step == STEP_FAILED) {
         int obx, oby;
         install_output_btn(&obx, &oby);
         if (point_in_rect(x, y, obx, oby, LOG_BTN_W, BTN_H)) {
             show_log_popup();
             return;
         }
+    }
+    if (step == STEP_FAILED) {
+        int bx, by;
+        failed_shutdown_btn(&bx, &by);
+        if (point_in_rect(x, y, bx, by, BTN_W, BTN_H))
+            do_shutdown();
+        return;
     }
     if (step == STEP_WELCOME) {
         int bx, by;
@@ -835,10 +881,20 @@ static void update_hover(int x, int y) {
     } else if (step == STEP_SETUP) {
         nb = point_in_rect(x, y, PAD, WIN_H - PAD - BTN_H, BTN_W, BTN_H);
         ni = point_in_rect(x, y, WIN_W - PAD - BTN_W, WIN_H - PAD - BTN_H, BTN_W, BTN_H);
-    } else if (step == STEP_INSTALLING) {
+    } else if (step == STEP_INSTALLING || step == STEP_FAILED) {
         int obx, oby;
         install_output_btn(&obx, &oby);
         lo = point_in_rect(x, y, obx, oby, LOG_BTN_W, BTN_H);
+    }
+    if (step == STEP_FAILED) {
+        int bx, by;
+        failed_shutdown_btn(&bx, &by);
+        int sh = point_in_rect(x, y, bx, by, BTN_W, BTN_H);
+        if (sh != shutdown_btn_hover) {
+            shutdown_btn_hover = sh;
+            draw_all();
+        }
+        return;
     }
     if (ns != start_hover || ni != install_hover || nb != back_hover || lo != log_btn_hover) {
         start_hover = ns;
@@ -895,7 +951,7 @@ int main(void) {
 
     int xfd = ConnectionNumber(dpy);
     while (1) {
-        if (step == STEP_INSTALLING || step == STEP_ALL_DONE) {
+        if (step == STEP_INSTALLING || step == STEP_ALL_DONE || step == STEP_FAILED) {
             struct timeval tv = { .tv_sec = 1, .tv_usec = 0 };
             fd_set fds;
             FD_ZERO(&fds);
@@ -969,8 +1025,12 @@ int main(void) {
 
         if (install_pid > 0) {
             int st;
-            if (waitpid(install_pid, &st, WNOHANG) > 0)
+            if (waitpid(install_pid, &st, WNOHANG) > 0) {
                 install_pid = 0;
+                if (step == STEP_INSTALLING &&
+                    (!WIFEXITED(st) || WEXITSTATUS(st) != 0))
+                    step = STEP_FAILED;
+            }
         }
     }
     return 0;
