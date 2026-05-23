@@ -30,7 +30,7 @@ fi
 
 need_host_tools
 
-if [[ ! -f "$ROOTFS/bin/bash" ]]; then
+if [[ ! -f "$ROOTFS/boot/vmlinuz-linux" ]]; then
     log "Rootfs not found; building..."
     "$ROOT/scripts/build-root.sh"
 fi
