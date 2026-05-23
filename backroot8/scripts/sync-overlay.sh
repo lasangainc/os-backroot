@@ -48,6 +48,8 @@ install -Dm644 "$ROOT/rootfs-overlay/usr/share/backgrounds/backroot8.jpg" \
     "$DEST/usr/share/backgrounds/backroot8.jpg"
 install -Dm644 "$ROOT/rootfs-overlay/usr/share/backroot8/bootscreen.png" \
     "$DEST/usr/share/backroot8/bootscreen.png"
+install -Dm644 "$ROOT/rootfs-overlay/usr/share/backroot8/default-user.png" \
+    "$DEST/usr/share/backroot8/default-user.png"
 install -Dm755 "$ROOT/rootfs-overlay/usr/share/backroot8/show-splash.sh" \
     "$DEST/usr/share/backroot8/show-splash.sh"
 install -Dm755 "$ROOT/rootfs-overlay/usr/share/backroot8/br8-panel-launcher.sh" \
