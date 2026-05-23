@@ -52,10 +52,11 @@ ROOT_PART="${DISK}3"
 
 status 14 "Formatting EFI (vfat)…"
 echo "[br8-install] mkfs.fat on $ESP_PART"
-mkfs.fat -F32 -n BACKROOT8EFI "$ESP_PART"
+# FAT volume labels are limited to 11 characters (BACKROOT8EFI is too long).
+mkfs.fat -F32 -n BACKROOT8 "$ESP_PART" || fail "mkfs.fat failed on $ESP_PART"
 status 17 "Formatting root (ext4, may take a few minutes)…"
 echo "[br8-install] mkfs.ext4 on $ROOT_PART"
-mkfs.ext4 -F -L Backroot8 "$ROOT_PART"
+mkfs.ext4 -F -L Backroot8 "$ROOT_PART" || fail "mkfs.ext4 failed on $ROOT_PART"
 echo "[br8-install] format complete"
 
 status 25 "Mounting target…"

@@ -683,8 +683,9 @@ static void draw_installing(void) {
         step = STEP_ALL_DONE;
         shutdown_at = time(NULL) + 10;
     } else if (st < 0) {
-        step = STEP_ALL_DONE;
-        shutdown_at = time(NULL) + 10;
+        char err[320];
+        snprintf(err, sizeof err, "Installation failed: %s", msg[0] ? msg : "unknown error");
+        xft_draw(win, PAD, bar_y + bar_h + 52, err, COL_WARN_R, COL_WARN_G, COL_WARN_B, font_body);
     }
 }
 
