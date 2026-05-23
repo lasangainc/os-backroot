@@ -2,7 +2,7 @@
 
 **Branch:** `buildingisopipe`  
 **Base:** `cursor/live-iso-43f1` (PR #24 — Milestone 1 ISO scaffolding)  
-**Status:** Work in progress — ISO builds; **desktop boot not verified** on latest overlay-root layout.
+**Status:** Overlay boot fix in progress (`cursor/iso-overlay-boot-fix-4a43`) — util-linux `mount` in initramfs + tmpfs upperdir ordering.
 
 ## Goal
 

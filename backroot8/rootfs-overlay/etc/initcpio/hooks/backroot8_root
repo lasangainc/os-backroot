@@ -1,15 +1,36 @@
 #!/usr/bin/ash
 # Mount writable overlay root for squashfs-based live ISO (no RAM disk copy).
 
+br8_mount() {
+    if [ -x /usr/bin/mount ]; then
+        /usr/bin/mount "$@"
+    else
+        mount "$@"
+    fi
+}
+
 run_hook() {
     grep -q 'backroot8iso' /proc/cmdline || return 0
     [ -d /run/br8/sq/bin ] || return 0
     [ -f /run/br8/sq/backroot8-root.img ] && return 0
 
-    modprobe overlay 2>/dev/null
-    mkdir -p /run/br8/cow/upper /run/br8/cow/work /new_root
-    mount -t tmpfs tmpfs /run/br8/cow -o mode=0755,size=50%
-    if ! mount -t overlay overlay \
+    if [ -x /usr/bin/modprobe ]; then
+        /usr/bin/modprobe overlay 2>/dev/null
+    else
+        modprobe overlay 2>/dev/null
+    fi
+    if ! grep -q '[[:space:]]overlay$' /proc/filesystems; then
+        echo "backroot8_root: overlay filesystem unavailable" >/dev/console
+        return 1
+    fi
+
+    mkdir -p /new_root /run/br8/cow
+    if ! br8_mount -t tmpfs tmpfs /run/br8/cow -o mode=0755,size=50%; then
+        echo "backroot8_root: tmpfs for overlay upper failed" >/dev/console
+        return 1
+    fi
+    mkdir -p /run/br8/cow/upper /run/br8/cow/work
+    if ! br8_mount -t overlay overlay \
         -o lowerdir=/run/br8/sq,upperdir=/run/br8/cow/upper,workdir=/run/br8/cow/work \
         /new_root; then
         echo "backroot8_root: overlay mount failed" >/dev/console

@@ -1,6 +1,9 @@
 #!/bin/bash
 build() {
     add_module overlay
+    # busybox mount in early initramfs does not support -t overlay
+    add_binary /usr/bin/mount
+    add_binary /usr/bin/modprobe
     add_runscript
 }
 
