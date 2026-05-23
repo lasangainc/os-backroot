@@ -25,5 +25,6 @@ vm/screenshot.png
 vm/archlinux-bootstrap.tar.zst
 src/br8-wm/br8-wm
 src/br8-panel/br8-panel
+src/br8-start/br8-start
 src/backroot-hello/backroot-hello
 src/power-pdf/powerpdf
