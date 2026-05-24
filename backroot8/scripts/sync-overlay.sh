@@ -29,7 +29,7 @@ run_make make -C "$ROOT/src/br8-panel" emblem.h
 run_make make -C "$ROOT/src/br8-wm" clean br8-wm
 run_make make -C "$ROOT/src/br8-panel" clean br8-panel
 run_make make -C "$ROOT/src/br8-start" clean br8-start
-run_make make -C "$ROOT/src/backroot-hello" clean backroot-hello
+run_make make -C "$ROOT/src/br8-settings" clean br8-settings
 run_make make -C "$ROOT/src/power-pdf" clean powerpdf
 run_make make -C "$ROOT/src/br8-install" clean br8-install
 run_make make -C "$ROOT/src/br8-oobe" clean br8-oobe
@@ -37,7 +37,7 @@ run_make make -C "$ROOT/src/br8-oobe" clean br8-oobe
 install -Dm755 "$ROOT/src/br8-wm/br8-wm" "$DEST/usr/local/bin/br8-wm"
 install -Dm755 "$ROOT/src/br8-panel/br8-panel" "$DEST/usr/local/bin/br8-panel"
 install -Dm755 "$ROOT/src/br8-start/br8-start" "$DEST/usr/local/bin/br8-start"
-install -Dm755 "$ROOT/src/backroot-hello/backroot-hello" "$DEST/usr/local/bin/backroot-hello"
+install -Dm755 "$ROOT/src/br8-settings/br8-settings" "$DEST/usr/local/bin/br8-settings"
 install -Dm755 "$ROOT/src/power-pdf/powerpdf" "$DEST/usr/local/bin/powerpdf"
 install -Dm755 "$ROOT/src/br8-install/br8-install" "$DEST/usr/local/bin/br8-install"
 install -Dm755 "$ROOT/src/br8-oobe/br8-oobe" "$DEST/usr/local/bin/br8-oobe"
@@ -56,8 +56,8 @@ install -Dm755 "$ROOT/rootfs-overlay/usr/lib/backroot8/br8-list-install-disks.sh
 
 install -Dm644 "$ROOT/rootfs-overlay/usr/share/backroot/README" \
     "$DEST/usr/share/backroot/README"
-install -Dm644 "$ROOT/rootfs-overlay/usr/share/applications/backroot-hello.desktop" \
-    "$DEST/usr/share/applications/backroot-hello.desktop"
+install -Dm644 "$ROOT/rootfs-overlay/usr/share/applications/br8-settings.desktop" \
+    "$DEST/usr/share/applications/br8-settings.desktop"
 install -Dm644 "$ROOT/rootfs-overlay/usr/share/applications/powerpdf.desktop" \
     "$DEST/usr/share/applications/powerpdf.desktop"
 install -Dm755 "$ROOT/rootfs-overlay/etc/X11/xinit/xinitrc" "$DEST/etc/X11/xinit/xinitrc"

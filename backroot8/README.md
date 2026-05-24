@@ -13,7 +13,7 @@ A minimal desktop environment built from scratch on **Arch Linux** with the prec
 - Taskbar shows open apps with icons (click to focus)
 - Transparent taskbar (`br8-panel`) — alpha blend only, **no blur**
 - Default wallpaper at `/usr/share/backgrounds/backroot8.jpg` (via `feh`)
-- PowerPDF viewer and Backroot Hello demo app
+- PowerPDF viewer and Settings metro app (wallpaper, display, keyboard, mouse, time zone)
 - Arch precompiled kernel (`linux` package from official repos)
 
 ## Quick start
