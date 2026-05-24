@@ -102,6 +102,10 @@ install -Dm644 "$ROOT/rootfs-overlay/usr/share/plymouth/themes/backroot8/backroo
     "$DEST/usr/share/plymouth/themes/backroot8/backroot8.plymouth"
 install -Dm644 "$ROOT/rootfs-overlay/usr/share/plymouth/themes/backroot8/backroot8.script" \
     "$DEST/usr/share/plymouth/themes/backroot8/backroot8.script"
+install -Dm644 "$ROOT/rootfs-overlay/usr/share/plymouth/themes/backroot8/bootscreen.png" \
+    "$DEST/usr/share/plymouth/themes/backroot8/bootscreen.png"
+install -Dm644 "$ROOT/rootfs-overlay/usr/share/plymouth/themes/backroot8/emblem.png" \
+    "$DEST/usr/share/plymouth/themes/backroot8/emblem.png"
 install -Dm644 "$ROOT/rootfs-overlay/etc/systemd/system/backroot8-live-cow.service" \
     "$DEST/etc/systemd/system/backroot8-live-cow.service"
 install -Dm755 "$ROOT/rootfs-overlay/usr/lib/backroot8/live-cow-setup.sh" \
