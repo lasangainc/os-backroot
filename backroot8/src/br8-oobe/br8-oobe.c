@@ -51,6 +51,12 @@
 #define THUMB_W 280
 #define THUMB_H 158
 #define THUMB_GAP 24
+#define CHECK_SZ 18
+#define INTRO_IN_MS 650
+#define INTRO_HOLD_MS 900
+#define INTRO_OUT_MS 550
+#define PAGE_TRANS_MS 420
+#define CARET_BLINK_MS 530
 
 #define SETUP_SCRIPT "/usr/lib/backroot8/br8-oobe-setup.sh"
 #define FINISH_LOGIN_SCRIPT "/usr/lib/backroot8/br8-oobe-finish-login.sh"
@@ -59,10 +65,20 @@
 #define WALLPAPER_CHOICE "/run/br8-oobe/wallpaper"
 
 typedef enum {
+    PHASE_INTRO,
     PHASE_PERSONALIZE,
     PHASE_ACCOUNT,
     PHASE_LOADING
 } Phase;
+
+typedef enum {
+    ANIM_IDLE,
+    ANIM_INTRO_IN,
+    ANIM_INTRO_HOLD,
+    ANIM_INTRO_OUT,
+    ANIM_PAGE_IN,
+    ANIM_PAGE
+} AnimState;
 
 typedef enum {
     FOCUS_USER,
@@ -85,7 +101,15 @@ static Visual *visual;
 static Colormap cmap;
 static int win_w, win_h;
 static XftFont *font_header, *font_sub, *font_label, *font_field, *font_btn;
-static Phase phase = PHASE_PERSONALIZE;
+static Phase phase = PHASE_INTRO;
+static AnimState anim = ANIM_INTRO_IN;
+static Phase page_from = PHASE_PERSONALIZE;
+static Phase page_to = PHASE_PERSONALIZE;
+static double anim_t;
+static double anim_start_ms;
+static int input_blocked;
+static int caret_on;
+static double caret_ms;
 static FocusField focus = FOCUS_USER;
 static char username[USER_MAX];
 static char password[PASS_MAX];
@@ -130,6 +154,14 @@ static int text_baseline(int height, XftFont *font) {
     return (height + font->ascent - font->descent) / 2;
 }
 
+static int blend_channel(int bg, int fg, double alpha) {
+    if (alpha <= 0.0)
+        return bg;
+    if (alpha >= 1.0)
+        return fg;
+    return bg + (int)((fg - bg) * alpha + 0.5);
+}
+
 static void xft_draw(Drawable draw, int x, int y, const char *text, int r, int g, int b,
         XftFont *font) {
     if (!font || !text)
@@ -146,12 +178,64 @@ static void xft_draw(Drawable draw, int x, int y, const char *text, int r, int g
     XftDrawDestroy(xd);
 }
 
+static void xft_draw_alpha(Drawable draw, int x, int y, const char *text, int r, int g, int b,
+        XftFont *font, double alpha) {
+    xft_draw(draw, x, y, text,
+        blend_channel(COL_BG_R, r, alpha),
+        blend_channel(COL_BG_G, g, alpha),
+        blend_channel(COL_BG_B, b, alpha),
+        font);
+}
+
 static int text_width(XftFont *font, const char *text) {
     XGlyphInfo ext;
     if (!font || !text || !text[0])
         return 0;
     XftTextExtentsUtf8(dpy, font, (FcChar8 *)text, (int)strlen(text), &ext);
     return ext.xOff;
+}
+
+static double now_ms(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return ts.tv_sec * 1000.0 + ts.tv_nsec / 1000000.0;
+}
+
+static double ease_out_cubic(double t) {
+    if (t <= 0.0)
+        return 0.0;
+    if (t >= 1.0)
+        return 1.0;
+    double u = 1.0 - t;
+    return 1.0 - u * u * u;
+}
+
+static int lerp_i(int a, int b, double t) {
+    return a + (int)((b - a) * t + (b > a ? 0.5 : -0.5));
+}
+
+static int animating_now(void) {
+    return anim != ANIM_IDLE;
+}
+
+static void begin_anim(AnimState next) {
+    anim = next;
+    anim_t = 0.0;
+    anim_start_ms = now_ms();
+    input_blocked = (next != ANIM_IDLE);
+}
+
+static void draw_checkmark(int cx, int cy, double alpha) {
+    int r = blend_channel(COL_BG_R, COL_TEXT_R, alpha);
+    int g = blend_channel(COL_BG_G, COL_TEXT_G, alpha);
+    int b = blend_channel(COL_BG_B, COL_TEXT_B, alpha);
+    XSetForeground(dpy, gc, rgb(r, g, b));
+    XSetLineAttributes(dpy, gc, 3, LineSolid, CapRound, JoinRound);
+    XDrawLine(dpy, canvas, gc, cx - CHECK_SZ / 2, cy,
+        cx - CHECK_SZ / 6, cy + CHECK_SZ / 2);
+    XDrawLine(dpy, canvas, gc, cx - CHECK_SZ / 6, cy + CHECK_SZ / 2,
+        cx + CHECK_SZ / 2, cy - CHECK_SZ / 3);
+    XSetLineAttributes(dpy, gc, 0, LineSolid, CapButt, JoinMiter);
 }
 
 static XftFont *open_font(const char *const *names) {
@@ -351,33 +435,40 @@ static void draw_field_box(int fx, int fy, const char *value, const char *placeh
         tg = 130;
         tb = 150;
     }
+    int text_x = fx + 12;
     if (draw_text[0])
-        xft_draw(canvas, fx + 12, fy + text_baseline(FIELD_H, font_field),
+        xft_draw(canvas, text_x, fy + text_baseline(FIELD_H, font_field),
             draw_text, tr, tg, tb, font_field);
+
+    if (active && caret_on) {
+        int caret_x = text_x;
+        if (show[0])
+            caret_x += text_width(font_field, show);
+        XSetForeground(dpy, gc, rgb(COL_TEXT_R, COL_TEXT_G, COL_TEXT_B));
+        XDrawLine(dpy, canvas, gc, caret_x, fy + 8, caret_x, fy + FIELD_H - 8);
+    }
 }
 
-static void draw_field_row(int row_y, const char *label, const char *value,
-        const char *placeholder, int masked, int active) {
-    int field_x = PAD + LABEL_W;
-    int label_y = row_y + text_baseline(FIELD_H, font_label);
-    xft_draw(canvas, PAD, label_y, label, COL_MUTED_R, COL_MUTED_G, COL_MUTED_B, font_label);
-    draw_field_box(field_x, row_y, value, placeholder, masked, active);
-}
-
-static void draw_finish_btn(int btn_x, int btn_y, const char *label, int hover) {
+static void draw_finish_btn(int btn_x, int btn_y, const char *label, int hover, double alpha) {
     int bg_r = hover ? 255 : COL_ACCENT_R;
     int bg_g = hover ? 255 : COL_ACCENT_G;
     int bg_b = hover ? 255 : COL_ACCENT_B;
     int fg_r = hover ? COL_BG_R : 255;
     int fg_g = hover ? COL_BG_G : 255;
     int fg_b = hover ? COL_BG_B : 255;
-    XSetForeground(dpy, gc, rgb(bg_r, bg_g, bg_b));
+    XSetForeground(dpy, gc, rgb(
+        blend_channel(COL_BG_R, bg_r, alpha),
+        blend_channel(COL_BG_G, bg_g, alpha),
+        blend_channel(COL_BG_B, bg_b, alpha)));
     XFillRectangle(dpy, canvas, gc, btn_x, btn_y, BTN_W, BTN_H);
-    XSetForeground(dpy, gc, rgb(255, 255, 255));
+    XSetForeground(dpy, gc, rgb(
+        blend_channel(COL_BG_R, 255, alpha),
+        blend_channel(COL_BG_G, 255, alpha),
+        blend_channel(COL_BG_B, 255, alpha)));
     XDrawRectangle(dpy, canvas, gc, btn_x, btn_y, BTN_W - 1, BTN_H - 1);
     int blw = text_width(font_btn, label);
-    xft_draw(canvas, btn_x + (BTN_W - blw) / 2, btn_y + text_baseline(BTN_H, font_btn),
-        label, fg_r, fg_g, fg_b, font_btn);
+    xft_draw_alpha(canvas, btn_x + (BTN_W - blw) / 2, btn_y + text_baseline(BTN_H, font_btn),
+        label, fg_r, fg_g, fg_b, font_btn, alpha);
 }
 
 static void personalize_layout(int *thumbs_y, int *btn_x, int *btn_y, int *thumb_x0) {
@@ -390,33 +481,63 @@ static void personalize_layout(int *thumbs_y, int *btn_x, int *btn_y, int *thumb
     *btn_y = win_h - PAD - BTN_H;
 }
 
-static void draw_personalize(void) {
+static void draw_intro(int ox, double alpha) {
+    const char *header = "Let's go through a few basics";
+    const char *pers = "Personalize";
+    const char *sign = "Sign in";
+    int sub_h = font_sub ? font_sub->height : 22;
+    int hdr_h = font_header ? font_header->height : 48;
+
+    xft_draw_alpha(canvas, PAD + ox, PAD + text_baseline(sub_h, font_sub),
+        header, COL_MUTED_R, COL_MUTED_G, COL_MUTED_B, font_sub, alpha);
+
+    int mid_y = win_h / 2;
+    int pers_w = text_width(font_header, pers);
+    int sign_w = text_width(font_header, sign);
+    int pers_x = win_w / 4 - pers_w / 2 + ox;
+    int sign_x = (win_w * 3) / 4 - sign_w / 2 + ox;
+    int label_y = mid_y + text_baseline(hdr_h, font_header);
+
+    xft_draw_alpha(canvas, pers_x, label_y, pers,
+        COL_TEXT_R, COL_TEXT_G, COL_TEXT_B, font_header, alpha);
+    xft_draw_alpha(canvas, sign_x, label_y, sign,
+        COL_TEXT_R, COL_TEXT_G, COL_TEXT_B, font_header, alpha);
+}
+
+static void draw_personalize(int ox, double alpha) {
     const char *title = "Make this computer yours";
     const char *subtitle = "Choose a background for your desktop.";
 
     int header_h = font_header ? font_header->height : 48;
-    xft_draw(canvas, PAD, PAD + text_baseline(header_h, font_header),
-        title, COL_TEXT_R, COL_TEXT_G, COL_TEXT_B, font_header);
-    xft_draw(canvas, PAD, PAD + header_h + 20 + text_baseline(font_sub ? font_sub->height : 22, font_sub),
-        subtitle, COL_MUTED_R, COL_MUTED_G, COL_MUTED_B, font_sub);
+    xft_draw_alpha(canvas, PAD + ox, PAD + text_baseline(header_h, font_header),
+        title, COL_TEXT_R, COL_TEXT_G, COL_TEXT_B, font_header, alpha);
+    xft_draw_alpha(canvas, PAD + ox, PAD + header_h + 20 + text_baseline(font_sub ? font_sub->height : 22, font_sub),
+        subtitle, COL_MUTED_R, COL_MUTED_G, COL_MUTED_B, font_sub, alpha);
 
     int thumbs_y, btn_x, btn_y, thumb_x0;
     personalize_layout(&thumbs_y, &btn_x, &btn_y, &thumb_x0);
 
     for (int i = 0; i < WALLPAPER_N; i++) {
-        int tx = thumb_x0 + i * (THUMB_W + THUMB_GAP);
+        int tx = thumb_x0 + i * (THUMB_W + THUMB_GAP) + ox;
         int sel = (i == wallpaper_sel);
-        XSetForeground(dpy, gc, rgb(sel ? COL_ACCENT_R : 200, sel ? COL_ACCENT_G : 200,
-            sel ? COL_ACCENT_B : 210));
+        XSetForeground(dpy, gc, rgb(
+            blend_channel(COL_BG_R, sel ? COL_ACCENT_R : 200, alpha),
+            blend_channel(COL_BG_G, sel ? COL_ACCENT_G : 200, alpha),
+            blend_channel(COL_BG_B, sel ? COL_ACCENT_B : 210, alpha)));
         XDrawRectangle(dpy, canvas, gc, tx - 2, thumbs_y - 2, THUMB_W + 4, THUMB_H + 4);
         if (thumb_loaded[i])
             XCopyArea(dpy, thumb_pm[i], canvas, gc, 0, 0, THUMB_W, THUMB_H, tx, thumbs_y);
         else {
-            XSetForeground(dpy, gc, rgb(COL_FIELD_R, COL_FIELD_G, COL_FIELD_B));
+            XSetForeground(dpy, gc, rgb(
+                blend_channel(COL_BG_R, COL_FIELD_R, alpha),
+                blend_channel(COL_BG_G, COL_FIELD_G, alpha),
+                blend_channel(COL_BG_B, COL_FIELD_B, alpha)));
             XFillRectangle(dpy, canvas, gc, tx, thumbs_y, THUMB_W, THUMB_H);
         }
+        if (sel)
+            draw_checkmark(tx + THUMB_W / 2, thumbs_y + THUMB_H + 22, alpha);
     }
-    draw_finish_btn(btn_x, btn_y, "Next", next_hover);
+    draw_finish_btn(btn_x + ox, btn_y, "Next", next_hover, alpha);
 }
 
 static void account_layout(int *title_y, int *row_user, int *row_pass, int *row_pass2,
@@ -432,7 +553,7 @@ static void account_layout(int *title_y, int *row_user, int *row_pass, int *row_
     *btn_y = win_h - PAD - BTN_H;
 }
 
-static void draw_account(void) {
+static void draw_account(int ox, double alpha) {
     const char *title = "Create a computer account";
     const char *subtitle =
         "If you want a password, choose something that will be easy for you to "
@@ -443,15 +564,27 @@ static void draw_account(void) {
     (void)title_y;
 
     int header_h = font_header ? font_header->height : 48;
-    xft_draw(canvas, PAD, PAD + text_baseline(header_h, font_header),
-        title, COL_TEXT_R, COL_TEXT_G, COL_TEXT_B, font_header);
-    xft_draw(canvas, PAD, PAD + header_h + 20 + text_baseline(font_sub ? font_sub->height : 22, font_sub),
-        subtitle, COL_MUTED_R, COL_MUTED_G, COL_MUTED_B, font_sub);
+    xft_draw_alpha(canvas, PAD + ox, PAD + text_baseline(header_h, font_header),
+        title, COL_TEXT_R, COL_TEXT_G, COL_TEXT_B, font_header, alpha);
+    xft_draw_alpha(canvas, PAD + ox, PAD + header_h + 20 + text_baseline(font_sub ? font_sub->height : 22, font_sub),
+        subtitle, COL_MUTED_R, COL_MUTED_G, COL_MUTED_B, font_sub, alpha);
 
-    draw_field_row(row_user, "User name", username, "Example: John", 0, focus == FOCUS_USER);
-    draw_field_row(row_pass, "Password", password, NULL, 1, focus == FOCUS_PASS);
-    draw_field_row(row_pass2, "Reenter password", password2, NULL, 1, focus == FOCUS_PASS2);
-    draw_finish_btn(btn_x, btn_y, "Finish", finish_hover);
+    int label_y_user = row_user + text_baseline(FIELD_H, font_label);
+    xft_draw_alpha(canvas, PAD + ox, label_y_user, "User name",
+        COL_MUTED_R, COL_MUTED_G, COL_MUTED_B, font_label, alpha);
+    draw_field_box(PAD + LABEL_W + ox, row_user, username, "Example: John", 0, focus == FOCUS_USER);
+
+    int label_y_pass = row_pass + text_baseline(FIELD_H, font_label);
+    xft_draw_alpha(canvas, PAD + ox, label_y_pass, "Password",
+        COL_MUTED_R, COL_MUTED_G, COL_MUTED_B, font_label, alpha);
+    draw_field_box(PAD + LABEL_W + ox, row_pass, password, NULL, 1, focus == FOCUS_PASS);
+
+    int label_y_pass2 = row_pass2 + text_baseline(FIELD_H, font_label);
+    xft_draw_alpha(canvas, PAD + ox, label_y_pass2, "Reenter password",
+        COL_MUTED_R, COL_MUTED_G, COL_MUTED_B, font_label, alpha);
+    draw_field_box(PAD + LABEL_W + ox, row_pass2, password2, NULL, 1, focus == FOCUS_PASS2);
+
+    draw_finish_btn(btn_x + ox, btn_y, "Finish", finish_hover, alpha);
 }
 
 static void draw_loading(void) {
@@ -480,6 +613,17 @@ static void draw_loading(void) {
         dotbuf, COL_MUTED_R, COL_MUTED_G, COL_MUTED_B, font_sub);
 }
 
+static void draw_phase(Phase p, int ox, double alpha) {
+    if (p == PHASE_INTRO)
+        draw_intro(ox, alpha);
+    else if (p == PHASE_PERSONALIZE)
+        draw_personalize(ox, alpha);
+    else if (p == PHASE_ACCOUNT)
+        draw_account(ox, alpha);
+    else
+        draw_loading();
+}
+
 static void draw_all(void) {
     ensure_back_buffer();
     if (!back_pm)
@@ -487,13 +631,101 @@ static void draw_all(void) {
     canvas = back_pm;
     XSetForeground(dpy, gc, rgb(COL_BG_R, COL_BG_G, COL_BG_B));
     XFillRectangle(dpy, canvas, gc, 0, 0, win_w, win_h);
-    if (phase == PHASE_PERSONALIZE)
-        draw_personalize();
-    else if (phase == PHASE_ACCOUNT)
-        draw_account();
-    else
+
+    if (anim == ANIM_INTRO_IN) {
+        double e = ease_out_cubic(anim_t);
+        int ox = lerp_i(-win_w, 0, e);
+        draw_intro(ox, e);
+    } else if (anim == ANIM_INTRO_HOLD) {
+        draw_intro(0, 1.0);
+    } else if (anim == ANIM_INTRO_OUT) {
+        double e = ease_out_cubic(anim_t);
+        int ox = lerp_i(0, -win_w, e);
+        draw_intro(ox, 1.0 - e);
+    } else if (anim == ANIM_PAGE_IN) {
+        double e = ease_out_cubic(anim_t);
+        int in_x = lerp_i(win_w, 0, e);
+        draw_phase(page_to, in_x, 1.0);
+    } else if (anim == ANIM_PAGE) {
+        double e = ease_out_cubic(anim_t);
+        int out_x = lerp_i(0, -win_w, e);
+        int in_x = lerp_i(win_w, 0, e);
+        draw_phase(page_from, out_x, 1.0);
+        draw_phase(page_to, in_x, 1.0);
+    } else if (phase == PHASE_INTRO) {
+        draw_intro(0, 1.0);
+    } else if (phase == PHASE_PERSONALIZE) {
+        draw_personalize(0, 1.0);
+    } else if (phase == PHASE_ACCOUNT) {
+        draw_account(0, 1.0);
+    } else {
         draw_loading();
+    }
     present_frame();
+}
+
+static void tick_animations(void) {
+    double elapsed = now_ms() - anim_start_ms;
+    int redraw = 0;
+
+    if (phase == PHASE_ACCOUNT ||
+        (anim == ANIM_PAGE && page_to == PHASE_ACCOUNT)) {
+        caret_ms += 16.0;
+        if ((int)(caret_ms / CARET_BLINK_MS) % 2 == 0) {
+            if (!caret_on) {
+                caret_on = 1;
+                redraw = 1;
+            }
+        } else if (caret_on) {
+            caret_on = 0;
+            redraw = 1;
+        }
+    }
+
+    if (anim == ANIM_INTRO_IN) {
+        anim_t = elapsed / INTRO_IN_MS;
+        if (anim_t >= 1.0) {
+            anim_t = 1.0;
+            begin_anim(ANIM_INTRO_HOLD);
+        }
+        redraw = 1;
+    } else if (anim == ANIM_INTRO_HOLD) {
+        anim_t = elapsed / INTRO_HOLD_MS;
+        if (anim_t >= 1.0) {
+            anim_t = 1.0;
+            begin_anim(ANIM_INTRO_OUT);
+        }
+    } else if (anim == ANIM_INTRO_OUT) {
+        anim_t = elapsed / INTRO_OUT_MS;
+        if (anim_t >= 1.0) {
+            anim_t = 1.0;
+            phase = PHASE_PERSONALIZE;
+            page_to = PHASE_PERSONALIZE;
+            begin_anim(ANIM_PAGE_IN);
+        }
+        redraw = 1;
+    } else if (anim == ANIM_PAGE_IN) {
+        anim_t = elapsed / PAGE_TRANS_MS;
+        if (anim_t >= 1.0) {
+            anim_t = 1.0;
+            phase = page_to;
+            anim = ANIM_IDLE;
+            input_blocked = 0;
+        }
+        redraw = 1;
+    } else if (anim == ANIM_PAGE) {
+        anim_t = elapsed / PAGE_TRANS_MS;
+        if (anim_t >= 1.0) {
+            anim_t = 1.0;
+            phase = page_to;
+            anim = ANIM_IDLE;
+            input_blocked = 0;
+        }
+        redraw = 1;
+    }
+
+    if (redraw)
+        draw_all();
 }
 
 static int valid_username(const char *s) {
@@ -545,9 +777,12 @@ static void start_setup(void) {
 }
 
 static void advance_personalize(void) {
+    if (input_blocked || anim != ANIM_IDLE)
+        return;
     save_wallpaper_choice();
-    phase = PHASE_ACCOUNT;
-    draw_all();
+    page_from = PHASE_PERSONALIZE;
+    page_to = PHASE_ACCOUNT;
+    begin_anim(ANIM_PAGE);
 }
 
 static char *active_field(void) {
@@ -587,6 +822,8 @@ static int point_in_rect(int x, int y, int rx, int ry, int rw, int rh) {
 }
 
 static void handle_key(XKeyEvent *kev) {
+    if (input_blocked || anim != ANIM_IDLE)
+        return;
     if (phase == PHASE_PERSONALIZE) {
         if (XLookupKeysym(kev, 0) == XK_Return || XLookupKeysym(kev, 0) == XK_KP_Enter)
             advance_personalize();
@@ -628,6 +865,8 @@ static void handle_key(XKeyEvent *kev) {
 }
 
 static void handle_click(int x, int y) {
+    if (input_blocked || anim != ANIM_IDLE)
+        return;
     if (phase == PHASE_PERSONALIZE) {
         int thumbs_y, btn_x, btn_y, thumb_x0;
         personalize_layout(&thumbs_y, &btn_x, &btn_y, &thumb_x0);
@@ -661,6 +900,8 @@ static void handle_click(int x, int y) {
 }
 
 static void update_hover(int x, int y) {
+    if (input_blocked || anim != ANIM_IDLE)
+        return;
     int nh = 0, nn = 0;
     if (phase == PHASE_PERSONALIZE) {
         int thumbs_y, btn_x, btn_y, thumb_x0;
@@ -753,8 +994,10 @@ static int run_event_loop(int until_panel) {
     time_t start = time(NULL);
 
     while (running) {
+        int fast_tick = animating_now() || phase == PHASE_LOADING || loading_only ||
+            phase == PHASE_ACCOUNT;
         struct timeval tv = { .tv_sec = 0,
-            .tv_usec = (phase == PHASE_LOADING || loading_only) ? 120000 : 200000 };
+            .tv_usec = fast_tick ? 16000 : 200000 };
         fd_set fds;
         FD_ZERO(&fds);
         FD_SET(xfd, &fds);
@@ -763,6 +1006,8 @@ static int run_event_loop(int until_panel) {
         if (phase == PHASE_LOADING || loading_only) {
             loading_anim += 0.15;
             draw_all();
+        } else if (animating_now() || phase == PHASE_ACCOUNT) {
+            tick_animations();
         }
 
         if (until_panel && loading_handoff_done()) {
@@ -866,6 +1111,7 @@ int main(int argc, char **argv) {
         return 1;
 
     load_all_thumbs();
+    begin_anim(ANIM_INTRO_IN);
     draw_all();
     run_event_loop(0);
     return 0;
