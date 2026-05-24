@@ -25,6 +25,12 @@
 #define PANEL_H 32
 #define TILE 150
 #define TILE_GAP 10
+#define TILE_PAD 14
+#define TILE_ICON_SZ 44
+#define TILE_LABEL_GAP 8
+#define TILE_LABEL_R 215
+#define TILE_LABEL_G 175
+#define TILE_LABEL_B 235
 #define MARGIN 48
 #define HEADER_H 72
 #define APP_ROW_H 56
@@ -75,11 +81,15 @@ typedef struct {
     int is_wide;
     int pinned;
     unsigned long fill_pixel;
+    char icon_name[128];
+    Pixmap icon_pm;
+    int icon_load_done;
 } Tile;
 
 typedef struct {
     char name[128];
     char exec_cmd[512];
+    char icon_name[128];
     int cr, cg, cb;
     char letter;
 } AppEntry;
@@ -90,7 +100,7 @@ static Window root, start_win;
 static GC gc;
 static Visual *visual;
 static Colormap cmap;
-static XftFont *ui_font, *header_font;
+static XftFont *ui_font, *header_font, *tile_font;
 static int win_w, win_h, root_h;
 static Atom br8_start_open;
 static int visible;
@@ -222,7 +232,18 @@ static void invalidate_static(void) {
     static_valid = 0;
 }
 
+static void release_tile_icons(void) {
+    for (int i = 0; i < n_home_tiles; i++) {
+        if (home_tiles[i].icon_pm) {
+            XFreePixmap(dpy, home_tiles[i].icon_pm);
+            home_tiles[i].icon_pm = 0;
+        }
+        home_tiles[i].icon_load_done = 0;
+    }
+}
+
 static void free_buffers(void) {
+    release_tile_icons();
     if (buf_pm) {
         XFreePixmap(dpy, buf_pm);
         buf_pm = 0;
@@ -561,6 +582,7 @@ static int parse_desktop(const char *path) {
     char line[512];
     char name[128] = "";
     char exec[512] = "";
+    char icon[128] = "";
     int hidden = 0;
     int nodisplay = 0;
     while (fgets(line, sizeof(line), f)) {
@@ -568,6 +590,10 @@ static int parse_desktop(const char *path) {
             snprintf(name, sizeof(name), "%.*s",
                 (int)(sizeof(name) - 1), line + 5);
             trim(name);
+        } else if (strncmp(line, "Icon=", 5) == 0) {
+            snprintf(icon, sizeof(icon), "%.*s",
+                (int)(sizeof(icon) - 1), line + 5);
+            trim(icon);
         } else if (strncmp(line, "Exec=", 5) == 0) {
             snprintf(exec, sizeof(exec), "%s", line + 5);
             trim(exec);
@@ -592,6 +618,10 @@ static int parse_desktop(const char *path) {
     AppEntry *a = &apps[n_apps++];
     snprintf(a->name, sizeof(a->name), "%s", name);
     snprintf(a->exec_cmd, sizeof(a->exec_cmd), "%s", exec);
+    if (icon[0])
+        snprintf(a->icon_name, sizeof(a->icon_name), "%s", icon);
+    else
+        a->icon_name[0] = '\0';
     app_color(a);
     return 1;
 }
@@ -635,7 +665,7 @@ static int tile_index_by_id(const char *id) {
 
 static void add_tile(const char *id, const char *label,
         int cr, int cg, int cb, char letter, Action act,
-        const char *exec, int is_wide, int pinned) {
+        const char *exec, int is_wide, int pinned, const char *icon_name) {
     if (n_home_tiles >= MAX_HOME_TILES)
         return;
     Tile *t = &home_tiles[n_home_tiles++];
@@ -649,6 +679,12 @@ static void add_tile(const char *id, const char *label,
     t->is_wide = is_wide;
     t->pinned = pinned;
     t->fill_pixel = rgb(cr, cg, cb);
+    t->icon_pm = 0;
+    t->icon_load_done = 0;
+    if (icon_name && icon_name[0])
+        snprintf(t->icon_name, sizeof(t->icon_name), "%s", icon_name);
+    else
+        t->icon_name[0] = '\0';
     if (exec)
         strncpy(t->exec_cmd, exec, sizeof(t->exec_cmd) - 1);
     else
@@ -657,10 +693,13 @@ static void add_tile(const char *id, const char *label,
 
 static void init_default_tiles(void) {
     n_home_tiles = 0;
-    add_tile("dolphin", "Dolphin", 0, 120, 215, 'D', ACT_DOLPHIN, NULL, 0, 0);
-    add_tile("terminal", "Terminal", 16, 124, 16, 'T', ACT_TERMINAL, NULL, 0, 0);
-    add_tile("settings", "Settings", 92, 45, 145, 'S', ACT_SETTINGS, NULL, 0, 0);
-    add_tile("desktop", "Desktop", 0, 0, 0, ' ', ACT_DESKTOP, NULL, 1, 0);
+    add_tile("dolphin", "Dolphin", 0, 120, 215, 'D', ACT_DOLPHIN, NULL, 0, 0,
+        "system-file-manager");
+    add_tile("terminal", "Terminal", 16, 124, 16, 'T', ACT_TERMINAL, NULL, 0, 0,
+        "utilities-terminal");
+    add_tile("settings", "Settings", 92, 45, 145, 'S', ACT_SETTINGS, NULL, 0, 0,
+        "preferences-system");
+    add_tile("desktop", "Desktop", 0, 0, 0, ' ', ACT_DESKTOP, NULL, 1, 0, NULL);
 }
 
 static void reset_tile_order(void) {
@@ -1280,10 +1319,74 @@ static void draw_bg(Drawable dst, GC g) {
     XFillRectangle(dpy, dst, g, 0, 0, win_w, win_h);
 }
 
-static void draw_tile_glyph(Drawable dst, GC g, const Tile *t, int sx, int sy, int sw, int sh) {
+static int file_exists(const char *path) {
+    struct stat st;
+    return stat(path, &st) == 0 && S_ISREG(st.st_mode);
+}
+
+static int try_icon_path(const char *fmt, const char *name, char *out, size_t n) {
+    snprintf(out, n, fmt, name);
+    return file_exists(out);
+}
+
+static int resolve_icon_file(const char *icon_name, char *out, size_t n) {
+    if (!icon_name || !icon_name[0])
+        return 0;
+    if (icon_name[0] == '/') {
+        if (file_exists(icon_name)) {
+            snprintf(out, n, "%s", icon_name);
+            return 1;
+        }
+        return 0;
+    }
+    static const char *const paths[] = {
+        "/usr/share/pixmaps/%s.png",
+        "/usr/share/pixmaps/%s.xpm",
+        "/usr/share/icons/hicolor/48x48/apps/%s.png",
+        "/usr/share/icons/hicolor/32x32/apps/%s.png",
+        "/usr/share/icons/hicolor/256x256/apps/%s.png",
+        "/usr/share/icons/Adwaita/48x48/apps/%s.png",
+        "/usr/share/icons/breeze/apps/48x48/%s.png",
+        "/usr/share/icons/breeze/apps/32x32/%s.png",
+        NULL
+    };
+    for (int i = 0; paths[i]; i++) {
+        if (try_icon_path(paths[i], icon_name, out, n))
+            return 1;
+    }
+    return 0;
+}
+
+static int tile_scale(int base, int sh) {
+    if (sh >= TILE - 16)
+        return base;
+    int v = base * sh / TILE;
+    return v < 10 ? 10 : v;
+}
+
+static void ensure_tile_icon(Tile *t) {
+    if (t->act == ACT_DESKTOP || t->icon_load_done)
+        return;
+    t->icon_load_done = 1;
+    if (!t->icon_name[0])
+        return;
+    char path[512];
+    if (!resolve_icon_file(t->icon_name, path, sizeof(path)))
+        return;
+    int iw = 0, ih = 0, comp = 0;
+    unsigned char *data = stbi_load(path, &iw, &ih, &comp, 3);
+    if (!data || iw <= 0 || ih <= 0)
+        return;
+    t->icon_pm = scale_image_to_pixmap(data, iw, ih, TILE_ICON_SZ, TILE_ICON_SZ);
+    stbi_image_free(data);
+}
+
+/* Wide Desktop tile: full wallpaper preview, label at bottom (unchanged). */
+static void draw_tile_desktop(Drawable dst, GC g, const Tile *t,
+        int sx, int sy, int sw, int sh) {
     if (sw < 1 || sh < 1)
         return;
-    if (t->act == ACT_DESKTOP && wallpaper_ready) {
+    if (wallpaper_ready) {
         int pw = t->w > 0 ? t->w : sw;
         int ph = t->h > 0 ? t->h : sh;
         int cw = sw < pw ? sw : pw;
@@ -1291,29 +1394,42 @@ static void draw_tile_glyph(Drawable dst, GC g, const Tile *t, int sx, int sy, i
         XSetForeground(dpy, g, pix_bg);
         XFillRectangle(dpy, dst, g, sx, sy, sw, sh);
         XCopyArea(dpy, wallpaper_pm, dst, g, 0, 0, cw, ch, sx, sy);
-        return;
+    } else {
+        XSetForeground(dpy, g, t->fill_pixel);
+        XFillRectangle(dpy, dst, g, sx, sy, sw, sh);
     }
+    if (ui_font && t->label[0])
+        xft_draw(dst, ui_font, sx + 8, sy + sh - 10, t->label, 255, 255, 255);
+}
+
+/* Square tiles: icon top-left, name below in lilac; empty icon slot if missing. */
+static void draw_tile_app(Drawable dst, GC g, Tile *t, int sx, int sy, int sw, int sh) {
+    if (sw < 1 || sh < 1)
+        return;
+    ensure_tile_icon(t);
+    int pad = tile_scale(TILE_PAD, sh);
+    int icon_sz = tile_scale(TILE_ICON_SZ, sh);
+
     XSetForeground(dpy, g, t->fill_pixel);
     XFillRectangle(dpy, dst, g, sx, sy, sw, sh);
 
-    if (t->act == ACT_TERMINAL) {
-        xft_draw(dst, ui_font, sx + sw / 2 - 18, sy + sh / 2 + 6,
-            ">_", 255, 255, 255);
-    } else if (t->letter) {
-        char s[2] = { t->letter, 0 };
-        if (ui_font) {
-            XGlyphInfo ext;
-            XftTextExtentsUtf8(dpy, ui_font, (FcChar8 *)s, 1, &ext);
-            xft_draw(dst, ui_font,
-                sx + (sw - ext.xOff) / 2,
-                sy + text_baseline(sh, ui_font),
-                s, 255, 255, 255);
-        }
+    if (t->icon_pm)
+        XCopyArea(dpy, t->icon_pm, dst, g, 0, 0, icon_sz, icon_sz, sx + pad, sy + pad);
+
+    XftFont *font = tile_font ? tile_font : ui_font;
+    if (font && t->label[0]) {
+        int label_x = sx + pad;
+        int label_y = sy + pad + icon_sz + tile_scale(TILE_LABEL_GAP, sh);
+        xft_draw(dst, font, label_x, label_y + font->ascent, t->label,
+            TILE_LABEL_R, TILE_LABEL_G, TILE_LABEL_B);
     }
 }
 
-static void draw_tile_label(Drawable dst, const Tile *t, int sx, int sy, int sh) {
-    xft_draw(dst, ui_font, sx + 8, sy + sh - 10, t->label, 255, 255, 255);
+static void draw_tile(Drawable dst, GC g, Tile *t, int sx, int sy, int sw, int sh) {
+    if (t->act == ACT_DESKTOP)
+        draw_tile_desktop(dst, g, t, sx, sy, sw, sh);
+    else
+        draw_tile_app(dst, g, t, sx, sy, sw, sh);
 }
 
 static void tile_screen_rect(const Tile *t, int ti, int dragging_now,
@@ -1378,13 +1494,12 @@ static void draw_home_section(Drawable dst, GC g) {
             if (pass == 1 && !is_drag)
                 continue;
 
-            const Tile *t = &home_tiles[ti];
+            Tile *t = &home_tiles[ti];
             int sx, sy, sw, sh;
             tile_screen_rect(t, ti, dragging, &sx, &sy, &sw, &sh);
             if (sy + sh < 0 || sy > win_h)
                 continue;
-            draw_tile_glyph(dst, g, t, sx, sy, sw, sh);
-            draw_tile_label(dst, t, sx, sy, sh);
+            draw_tile(dst, g, t, sx, sy, sw, sh);
         }
     }
 }
@@ -1616,7 +1731,7 @@ static void pin_app(int app_idx) {
     if (tile_index_by_id(id) >= 0)
         return;
     add_tile(id, a->name, a->cr, a->cg, a->cb, a->letter,
-        ACT_EXEC, a->exec_cmd, 0, 1);
+        ACT_EXEC, a->exec_cmd, 0, 1, a->icon_name[0] ? a->icon_name : NULL);
     int idx = n_home_tiles - 1;
     if (n_tile_order < MAX_HOME_TILES)
         tile_order[n_tile_order++] = idx;
@@ -1738,6 +1853,22 @@ static void open_fonts(void) {
         if (header_font) {
             XftFontClose(dpy, header_font);
             header_font = NULL;
+        }
+    }
+    static const char *const tile_names[] = {
+        "Segoe UI Semibold-15:antialias=true",
+        "Segoe UI-15:antialias=true",
+        "sans-serif-15:antialias=true",
+        "DejaVu Sans-15",
+        NULL
+    };
+    for (int i = 0; tile_names[i]; i++) {
+        tile_font = XftFontOpenName(dpy, screen, tile_names[i]);
+        if (tile_font && tile_font->ascent > 0)
+            break;
+        if (tile_font) {
+            XftFontClose(dpy, tile_font);
+            tile_font = NULL;
         }
     }
 }
