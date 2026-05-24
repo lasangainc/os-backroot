@@ -314,7 +314,8 @@ static void present_frame(void) {
 }
 
 static void save_wallpaper_choice(void) {
-    mkdir("/run/br8-oobe", 0755);
+    mkdir("/run/br8-oobe", 1777);
+    chmod("/run/br8-oobe", 01777);
     FILE *fp = fopen(WALLPAPER_CHOICE, "w");
     if (fp) {
         fprintf(fp, "%d\n", wallpaper_sel);
@@ -526,7 +527,8 @@ static void start_setup(void) {
 
     char pass_file[128];
     snprintf(pass_file, sizeof pass_file, "/run/br8-oobe/pass");
-    mkdir("/run/br8-oobe", 0755);
+    mkdir("/run/br8-oobe", 1777);
+    chmod("/run/br8-oobe", 01777);
     FILE *fp = fopen(pass_file, "w");
     if (fp) {
         fputs(password, fp);
@@ -709,22 +711,6 @@ static void finish_login(void) {
     }
 }
 
-static int root_cardinal(const char *name) {
-    Atom atom = XInternAtom(dpy, name, False);
-    Atom actual;
-    int fmt;
-    unsigned long n, bytes;
-    unsigned long *data = NULL;
-    int v = 0;
-    if (XGetWindowProperty(dpy, root, atom, 0, 8, False, XA_CARDINAL,
-            &actual, &fmt, &n, &bytes, (unsigned char **)&data) == Success &&
-        data && n > 0)
-        v = data[0] ? 1 : 0;
-    if (data)
-        XFree(data);
-    return v;
-}
-
 static void clear_metro_active(void) {
     Atom atom = XInternAtom(dpy, "_BR8_METRO_ACTIVE", False);
     unsigned long v = 0;
@@ -737,8 +723,23 @@ static int panel_is_ready(void) {
     return access(PANEL_READY, F_OK) == 0;
 }
 
+static void ensure_panel_running(void) {
+    if (panel_is_ready())
+        return;
+    if (access("/usr/local/bin/br8-panel", X_OK) != 0)
+        return;
+    pid_t pid = fork();
+    if (pid == 0) {
+        execl("/usr/local/bin/br8-panel", "br8-panel", (char *)NULL);
+        _exit(127);
+    }
+}
+
 static int loading_handoff_done(void) {
-    return panel_is_ready() && !root_cardinal("_BR8_METRO_ACTIVE");
+    if (!panel_is_ready())
+        return 0;
+    clear_metro_active();
+    return 1;
 }
 
 static void clear_loading_state(void) {
@@ -751,6 +752,7 @@ static int run_event_loop(int until_panel) {
     int xfd = ConnectionNumber(dpy);
     int running = 1;
     time_t start = time(NULL);
+    time_t last_panel_spawn = 0;
 
     while (running) {
         struct timeval tv = { .tv_sec = 0,
@@ -763,6 +765,11 @@ static int run_event_loop(int until_panel) {
         if (phase == PHASE_LOADING || loading_only) {
             loading_anim += 0.15;
             draw_all();
+        }
+
+        if (until_panel && !panel_is_ready() && time(NULL) - last_panel_spawn >= 2) {
+            ensure_panel_running();
+            last_panel_spawn = time(NULL);
         }
 
         if (until_panel && loading_handoff_done()) {

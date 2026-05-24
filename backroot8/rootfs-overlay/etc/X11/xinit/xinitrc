@@ -7,6 +7,14 @@ xrdb -merge /etc/X11/Xresources 2>/dev/null || true
 OOBE_LOADING=0
 if [ -f /run/br8-oobe/keep-loading ]; then
     OOBE_LOADING=1
+    chmod 1777 /run/br8-oobe 2>/dev/null || true
+fi
+
+# Panel before loading overlay and WM (OOBE handoff must signal panel-ready early)
+/usr/share/backroot8/br8-panel-launcher.sh &
+PANEL_PID=$!
+
+if [ "$OOBE_LOADING" = 1 ]; then
     /usr/local/bin/br8-oobe --loading &
 fi
 
@@ -30,10 +38,6 @@ if command -v feh >/dev/null && [ -r "$WALLPAPER" ]; then
 else
     [ "$OOBE_LOADING" = 0 ] && xsetroot -solid "#1e2030"
 fi
-
-# Panel before WM so the taskbar maps before br8-wm manages clients
-/usr/share/backroot8/br8-panel-launcher.sh &
-PANEL_PID=$!
 
 # Start menu overlay (Home / Apps launcher)
 ( while true; do /usr/local/bin/br8-start; sleep 1; done ) &
@@ -59,9 +63,9 @@ if [ -n "${SPLASH_PID:-}" ]; then
     kill "$SPLASH_PID" 2>/dev/null || true
 fi
 
-# Brief pause so panel maps before WM adopts existing windows (OOBE handoff)
+# Brief pause so panel maps and signals panel-ready before WM (OOBE handoff)
 if [ "$OOBE_LOADING" = 1 ]; then
-    for _ in 1 2 3 4 5 6 7 8 9 10; do
+    for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30; do
         [ -f /run/br8-oobe/panel-ready ] && break
         sleep 0.2
     done
