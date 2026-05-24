@@ -54,7 +54,7 @@
 typedef enum {
     ACT_TERMINAL,
     ACT_DOLPHIN,
-    ACT_HELLO,
+    ACT_SETTINGS,
     ACT_DESKTOP,
     ACT_EXEC
 } Action;
@@ -452,13 +452,13 @@ static void spawn_dolphin(void) {
     _exit(1);
 }
 
-static void spawn_hello(void) {
+static void spawn_settings(void) {
     pid_t pid = fork();
     if (pid != 0)
         return;
     setenv("HOME", "/root", 1);
     setenv("DISPLAY", ":0", 1);
-    execl("/usr/local/bin/backroot-hello", "backroot-hello", NULL);
+    execl("/usr/local/bin/br8-settings", "br8-settings", NULL);
     _exit(1);
 }
 
@@ -479,7 +479,7 @@ static void launch_action(Action act, const char *exec_cmd) {
     switch (act) {
     case ACT_TERMINAL: spawn_terminal(); break;
     case ACT_DOLPHIN: spawn_dolphin(); break;
-    case ACT_HELLO: spawn_hello(); break;
+    case ACT_SETTINGS: spawn_settings(); break;
     case ACT_DESKTOP: break;
     case ACT_EXEC: spawn_exec(exec_cmd); break;
     }
@@ -618,7 +618,7 @@ static void init_default_tiles(void) {
     n_home_tiles = 0;
     add_tile("dolphin", "Dolphin", 0, 120, 215, 'D', ACT_DOLPHIN, NULL, 0, 0);
     add_tile("terminal", "Terminal", 16, 124, 16, 'T', ACT_TERMINAL, NULL, 0, 0);
-    add_tile("hello", "Backroot Hello", 92, 45, 145, 'B', ACT_HELLO, NULL, 0, 0);
+    add_tile("settings", "Settings", 92, 45, 145, 'S', ACT_SETTINGS, NULL, 0, 0);
     add_tile("desktop", "Desktop", 0, 0, 0, ' ', ACT_DESKTOP, NULL, 1, 0);
 }
 

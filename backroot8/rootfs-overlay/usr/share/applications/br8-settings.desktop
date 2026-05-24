@@ -1,7 +1,7 @@
 [Desktop Entry]
-Name=Backroot Hello
-Comment=Configure keyboard layout and timezone
-Exec=/usr/local/bin/backroot-hello
+Name=Settings
+Comment=Wallpaper, display, keyboard, mouse, and time zone
+Exec=/usr/local/bin/br8-settings
 Icon=preferences-system
 Terminal=false
 Type=Application

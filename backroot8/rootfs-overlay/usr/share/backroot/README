@@ -1,7 +1,7 @@
 Backroot system tools live under /usr/share/backroot/.
 
 Applications:
-  backroot-hello  —  /usr/local/bin/backroot-hello
-                     Keyboard layout and timezone configuration (X11)
+  br8-settings  —  /usr/local/bin/br8-settings
+                   System settings: wallpaper, display, keyboard, mouse, time zone
 
-Launch from a terminal or run: backroot-hello
+Launch from the Start screen or run: br8-settings
