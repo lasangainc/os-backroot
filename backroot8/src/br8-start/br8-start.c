@@ -28,9 +28,8 @@
 #define TILE_PAD 14
 #define TILE_ICON_SZ 44
 #define TILE_LABEL_GAP 8
-#define TILE_LABEL_R 215
-#define TILE_LABEL_G 175
-#define TILE_LABEL_B 235
+/* Translucent white label on colored tiles (~45% opacity). */
+#define TILE_LABEL_ALPHA ((unsigned short)(65535 * 45 / 100))
 #define MARGIN 48
 #define HEADER_H 72
 #define APP_ROW_H 56
@@ -331,8 +330,8 @@ static int text_baseline(int height, XftFont *font) {
 
 static Drawable draw_dst;
 
-static void xft_draw(Drawable draw, XftFont *font, int x, int y,
-        const char *text, int r, int g, int b) {
+static void xft_draw_rgba(Drawable draw, XftFont *font, int x, int y,
+        const char *text, int r, int g, int b, unsigned short alpha) {
     if (!font || !text || !text[0])
         return;
     if (!xft_dc || draw != draw_dst) {
@@ -341,23 +340,22 @@ static void xft_draw(Drawable draw, XftFont *font, int x, int y,
         xft_dc = XftDrawCreate(dpy, draw, visual, cmap);
         draw_dst = draw;
     }
+    XRenderColor rc;
+    rc.red = (unsigned short)(r * 257);
+    rc.green = (unsigned short)(g * 257);
+    rc.blue = (unsigned short)(b * 257);
+    rc.alpha = alpha;
     XftColor col;
-    const XftColor *use = &xft_white;
-    if (r != 255 || g != 255 || b != 255) {
-        XRenderColor rc = render_rgb(r, g, b);
-        if (!XftColorAllocValue(dpy, visual, cmap, &rc, &col))
-            return;
-        use = &col;
-    } else if (!xft_white_ok) {
-        XRenderColor rc = render_rgb(255, 255, 255);
-        if (!XftColorAllocValue(dpy, visual, cmap, &rc, &col))
-            return;
-        use = &col;
-    }
-    XftDrawStringUtf8(xft_dc, use, font, x, y,
+    if (!XftColorAllocValue(dpy, visual, cmap, &rc, &col))
+        return;
+    XftDrawStringUtf8(xft_dc, &col, font, x, y,
         (FcChar8 *)text, (int)strlen(text));
-    if (use != &xft_white)
-        XftColorFree(dpy, visual, cmap, &col);
+    XftColorFree(dpy, visual, cmap, &col);
+}
+
+static void xft_draw(Drawable draw, XftFont *font, int x, int y,
+        const char *text, int r, int g, int b) {
+    xft_draw_rgba(draw, font, x, y, text, r, g, b, 0xffff);
 }
 
 static void app_color(AppEntry *a) {
@@ -1402,26 +1400,31 @@ static void draw_tile_desktop(Drawable dst, GC g, const Tile *t,
         xft_draw(dst, ui_font, sx + 8, sy + sh - 10, t->label, 255, 255, 255);
 }
 
-/* Square tiles: icon top-left, name below in lilac; empty icon slot if missing. */
+/* Square tiles: icon top-left; Segoe UI label in translucent white. */
 static void draw_tile_app(Drawable dst, GC g, Tile *t, int sx, int sy, int sw, int sh) {
     if (sw < 1 || sh < 1)
         return;
     ensure_tile_icon(t);
     int pad = tile_scale(TILE_PAD, sh);
     int icon_sz = tile_scale(TILE_ICON_SZ, sh);
+    int has_icon = t->icon_pm != 0;
 
     XSetForeground(dpy, g, t->fill_pixel);
     XFillRectangle(dpy, dst, g, sx, sy, sw, sh);
 
-    if (t->icon_pm)
+    if (has_icon)
         XCopyArea(dpy, t->icon_pm, dst, g, 0, 0, icon_sz, icon_sz, sx + pad, sy + pad);
 
-    XftFont *font = tile_font ? tile_font : ui_font;
-    if (font && t->label[0]) {
+    if (tile_font && t->label[0]) {
         int label_x = sx + pad;
-        int label_y = sy + pad + icon_sz + tile_scale(TILE_LABEL_GAP, sh);
-        xft_draw(dst, font, label_x, label_y + font->ascent, t->label,
-            TILE_LABEL_R, TILE_LABEL_G, TILE_LABEL_B);
+        int label_baseline;
+        if (has_icon)
+            label_baseline = sy + pad + icon_sz + tile_scale(TILE_LABEL_GAP, sh)
+                + tile_font->ascent;
+        else
+            label_baseline = sy + sh - pad;
+        xft_draw_rgba(dst, tile_font, label_x, label_baseline, t->label,
+            255, 255, 255, TILE_LABEL_ALPHA);
     }
 }
 
@@ -1858,8 +1861,8 @@ static void open_fonts(void) {
     static const char *const tile_names[] = {
         "Segoe UI Semibold-15:antialias=true",
         "Segoe UI-15:antialias=true",
-        "sans-serif-15:antialias=true",
-        "DejaVu Sans-15",
+        "Segoe UI Light-15:antialias=true",
+        "Segoe UI-14:antialias=true",
         NULL
     };
     for (int i = 0; tile_names[i]; i++) {
