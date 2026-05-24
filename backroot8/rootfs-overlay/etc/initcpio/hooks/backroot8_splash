@@ -5,7 +5,8 @@ br8_fb_splash() {
     grep -q 'br8\.debug' /proc/cmdline && return 0
     grep -q 'plymouth\.enable=0' /proc/cmdline && return 0
     [ -x /usr/bin/fbi ] || return 0
-    [ -r /usr/share/backroot8/bootscreen.png ] || return 0
+
+    _img=$(br8_pick_bootscreen) || return 0
 
     modprobe bochs 2>/dev/null
     sleep 0.2
@@ -14,7 +15,7 @@ br8_fb_splash() {
         return 0
     fi
 
-    fbi -T 1 -d /dev/fb0 -noverbose -fit /usr/share/backroot8/bootscreen.png </dev/null 2>/dev/null &
+    fbi -T 1 -d /dev/fb0 -noverbose -fit "$_img" </dev/null 2>/dev/null &
 }
 
 run_hook() {
