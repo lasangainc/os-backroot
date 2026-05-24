@@ -185,7 +185,7 @@ fi
 cat >"$TARGET/etc/default/grub" <<EOF
 GRUB_TIMEOUT=3
 GRUB_DISTRIBUTOR="Backroot 8"
-GRUB_CMDLINE_LINUX_DEFAULT="quiet loglevel=3"
+GRUB_CMDLINE_LINUX_DEFAULT="quiet splash loglevel=3 rd.systemd.show_status=false systemd.show_status=false rd.udev.log_priority=3 vt.global_cursor_default=0"
 GRUB_CMDLINE_LINUX=""
 GRUB_DISABLE_OS_PROBER=true
 EOF

@@ -2,7 +2,7 @@
 Description=Backroot 8 live writable root setup
 DefaultDependencies=no
 After=local-fs.target
-Before=dbus.service systemd-logind.service backroot8-splash.service
+Before=dbus.service systemd-logind.service plymouth-start.service backroot8-desktop.service
 
 [Service]
 Type=oneshot

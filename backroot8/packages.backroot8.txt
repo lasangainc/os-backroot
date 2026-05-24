@@ -10,7 +10,7 @@ xf86-video-vesa
 xterm
 pcmanfm
 feh
-fbida
+plymouth
 nettle
 xorg-fonts-misc
 libxft

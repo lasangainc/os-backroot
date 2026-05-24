@@ -10,7 +10,6 @@ if [ -f /run/br8-oobe/keep-loading ]; then
     /usr/local/bin/br8-oobe --loading &
 fi
 
-SPLASH=/usr/share/backroot8/bootscreen.png
 WALLPAPER=/usr/share/backgrounds/backroot8.jpg
 if [ -r "$HOME/.config/backroot8/wallpaper.jpg" ]; then
     WALLPAPER="$HOME/.config/backroot8/wallpaper.jpg"
@@ -18,11 +17,6 @@ fi
 
 if [ "$OOBE_LOADING" = 0 ]; then
     xsetroot -solid black
-fi
-
-if [ "$OOBE_LOADING" = 0 ] && command -v feh >/dev/null && [ -r "$SPLASH" ]; then
-    feh --fullscreen --scale-down --auto-zoom --image-bg black --borderless "$SPLASH" &
-    SPLASH_PID=$!
 fi
 
 if command -v feh >/dev/null && [ -r "$WALLPAPER" ]; then
@@ -54,10 +48,7 @@ if ! /usr/lib/backroot8/is-live-boot.sh && [ ! -f /etc/backroot8/oobe-pending ];
         -title "${USER:-root}@Backroot8" -e /bin/bash -l &
 fi
 
-if [ -n "${SPLASH_PID:-}" ]; then
-    sleep 1
-    kill "$SPLASH_PID" 2>/dev/null || true
-fi
+/usr/lib/backroot8/br8-plymouth-quit.sh &
 
 # Brief pause so panel maps before WM adopts existing windows (OOBE handoff)
 if [ "$OOBE_LOADING" = 1 ]; then

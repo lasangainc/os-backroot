@@ -2,6 +2,8 @@
 # Backroot 8 ISO: load squashfs from media; ext4-in-squashfs uses RAM copy.
 
 run_hook() {
+    . /usr/lib/initcpio/br8_boot_util
+
     if ! grep -q 'backroot8iso' /proc/cmdline; then
         return 0
     fi
@@ -41,7 +43,7 @@ run_hook() {
 
     # Squashfs holds the rootfs tree — backroot8_root hook mounts overlay.
     if [ -f "$sqmnt/bin/bash" ]; then
-        echo "backroot8_iso: squashfs rootfs loaded" >/dev/console
+        br8_log "squashfs rootfs loaded"
         return 0
     fi
 
@@ -51,7 +53,7 @@ run_hook() {
     fi
 
     imgsz=$(stat -c %s "$sqmnt/backroot8-root.img" 2>/dev/null || echo 0)
-    echo "backroot8_iso: copying root ($((imgsz / 1024 / 1024)) MiB) to RAM..." >/dev/console
+    br8_log "copying root ($((imgsz / 1024 / 1024)) MiB) to RAM..."
     if ! cp "$sqmnt/backroot8-root.img" /run/backroot8-root.img; then
         echo "backroot8_iso: RAM copy failed — use 4GB+ RAM or rebuild ISO with squashfs root" >/dev/console
         return 1
@@ -67,5 +69,5 @@ run_hook() {
         echo "backroot8_iso: losetup failed" >/dev/console
         return 1
     fi
-    echo "backroot8_iso: writable root on ${img_dev}" >/dev/console
+    br8_log "writable root on ${img_dev}"
 }

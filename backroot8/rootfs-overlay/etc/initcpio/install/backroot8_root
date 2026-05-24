@@ -4,6 +4,7 @@ build() {
     # busybox mount in early initramfs does not support -t overlay
     add_binary /usr/bin/mount
     add_binary /usr/bin/modprobe
+    add_file /etc/initcpio/hooks/br8_boot_util /usr/lib/initcpio/br8_boot_util
     add_runscript
 }
 

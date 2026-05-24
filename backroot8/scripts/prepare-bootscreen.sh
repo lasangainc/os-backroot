@@ -5,13 +5,14 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SRC="${1:-$ROOT/assets/bootscreen.png}"
 OUT="${2:-$ROOT/rootfs-overlay/usr/share/backroot8/bootscreen.png}"
+THEME_OUT="$ROOT/rootfs-overlay/usr/share/plymouth/themes/backroot8/bootscreen.png"
 
 if ! command -v python3 >/dev/null; then
     echo "prepare-bootscreen.sh: python3 required" >&2
     exit 1
 fi
 
-python3 - "$SRC" "$OUT" <<'PY'
+python3 - "$SRC" "$OUT" "$THEME_OUT" <<'PY'
 import sys
 from pathlib import Path
 from PIL import Image
@@ -43,5 +44,9 @@ bg.paste(emblem, (logo_x, logo_y), emblem)
 
 out.parent.mkdir(parents=True, exist_ok=True)
 bg.save(out, format="PNG")
+theme = Path(sys.argv[3])
+theme.parent.mkdir(parents=True, exist_ok=True)
+bg.save(theme, format="PNG")
 print(f"Wrote {out} ({CANVAS_W}x{CANVAS_H}, logo {nw}x{nh} @ ({logo_x},{logo_y}))")
+print(f"Wrote {theme}")
 PY

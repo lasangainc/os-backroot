@@ -101,14 +101,10 @@ chmod 755 /usr/share/empty.sshd
 systemctl enable NetworkManager
 systemctl enable sshd
 
-mkdir -p /etc/systemd/system/getty@tty1.service.d
-cat > /etc/systemd/system/getty@tty1.service.d/autologin.conf <<'AUTO'
-[Service]
-ExecStart=
-ExecStart=-/usr/bin/agetty --autologin root --noclear %I $TERM
-AUTO
+# tty1 is owned by backroot8-desktop (startx); avoid getty fighting Plymouth/X.
+systemctl mask getty@tty1.service
 
-sed -i 's/^HOOKS=.*/HOOKS=(base udev modconf block backroot8_iso backroot8_root filesystems fsck)/' /etc/mkinitcpio.conf
+sed -i 's/^HOOKS=.*/HOOKS=(base udev modconf kms block plymouth backroot8_iso backroot8_root filesystems fsck)/' /etc/mkinitcpio.conf
 grep -q '^MODULES=.*overlay' /etc/mkinitcpio.conf || \
     sed -i 's/^MODULES=(/MODULES=(overlay /' /etc/mkinitcpio.conf
 pacman -Syu --noconfirm
@@ -128,8 +124,10 @@ install -Dm644 "$SEGOE_TMP/extract/EULA.txt" \
 arch-chroot "$ROOTFS" fc-cache -f
 rm -rf "$SEGOE_TMP"
 
+arch-chroot "$ROOTFS" plymouth-set-default-theme -R backroot8
+
 arch-chroot "$ROOTFS" systemctl enable \
-    backroot8-live-cow.service backroot8-splash.service backroot8-desktop.service sshd \
+    plymouth-start.service backroot8-live-cow.service backroot8-desktop.service sshd \
     2>/dev/null || true
 
 mkdir -p "$ROOTFS/root"

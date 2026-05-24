@@ -1,7 +1,8 @@
 [Unit]
 Description=Backroot 8 Desktop (X11)
-After=network.target backroot8-live-cow.service backroot8-splash.service
+After=network.target backroot8-live-cow.service plymouth-start.service
 Wants=backroot8-live-cow.service
+Conflicts=getty@tty1.service
 
 [Service]
 User=root
@@ -13,7 +14,6 @@ StandardOutput=journal
 StandardError=journal
 Environment=HOME=/root
 Environment=XDG_RUNTIME_DIR=/run/user/0
-ExecStartPre=-/usr/bin/killall -q fbi
 ExecStart=/usr/lib/backroot8/br8-desktop-session.sh
 Restart=on-failure
 RestartSec=15

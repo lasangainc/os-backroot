@@ -1,0 +1,25 @@
+# Backroot 8 — static splash matching /usr/share/backroot8/bootscreen.png layout
+
+Window.SetBackgroundTopColor(0.0, 0.0, 0.0);
+Window.SetBackgroundBottomColor(0.0, 0.0, 0.0);
+
+splash_image = Image("bootscreen.png");
+image_width = splash_image.GetWidth();
+image_height = splash_image.GetHeight();
+splash_sprite = Sprite();
+
+fun place_splash ()
+{
+    screen_width = Window.GetWidth();
+    screen_height = Window.GetHeight();
+    scale = Math.Min(screen_width / image_width, screen_height / image_height);
+    scaled_width = image_width * scale;
+    scaled_height = image_height * scale;
+    scaled = splash_image.Scale(scaled_width, scaled_height);
+    splash_sprite.SetImage(scaled);
+    splash_sprite.SetX((screen_width - scaled_width) / 2);
+    splash_sprite.SetY((screen_height - scaled_height) / 2);
+}
+
+place_splash();
+Window.SetRefreshFunction(place_splash);
