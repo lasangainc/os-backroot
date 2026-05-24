@@ -598,7 +598,7 @@ static void load_thumb(int idx) {
     GC tgc = XCreateGC(dpy, thumb_pm[idx], 0, NULL);
     XPutImage(dpy, thumb_pm[idx], tgc, xi, 0, 0, 0, 0, THUMB_W, THUMB_H);
     XFreeGC(dpy, tgc);
-    free(xi->data);
+    /* XDestroyImage frees xi->data; do not free it separately */
     XDestroyImage(xi);
     stbi_image_free(img);
     thumb_loaded[idx] = 1;
