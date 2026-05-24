@@ -22,6 +22,7 @@ run_make() {
 
 log "Building desktop binaries..."
 run_make "$ROOT/scripts/prepare-bootscreen.sh"
+run_make "$ROOT/scripts/prepare-install-banner.sh"
 run_make python3 "$ROOT/scripts/prepare-neoemblem.py" \
     "$ROOT/assets/neoemblem-source.txt" "$ROOT/assets/neoemblem.txt"
 run_make make -C "$ROOT/src/br8-panel" emblem.h
@@ -30,12 +31,28 @@ run_make make -C "$ROOT/src/br8-panel" clean br8-panel
 run_make make -C "$ROOT/src/br8-start" clean br8-start
 run_make make -C "$ROOT/src/backroot-hello" clean backroot-hello
 run_make make -C "$ROOT/src/power-pdf" clean powerpdf
+run_make make -C "$ROOT/src/br8-install" clean br8-install
+run_make make -C "$ROOT/src/br8-oobe" clean br8-oobe
 
 install -Dm755 "$ROOT/src/br8-wm/br8-wm" "$DEST/usr/local/bin/br8-wm"
 install -Dm755 "$ROOT/src/br8-panel/br8-panel" "$DEST/usr/local/bin/br8-panel"
 install -Dm755 "$ROOT/src/br8-start/br8-start" "$DEST/usr/local/bin/br8-start"
 install -Dm755 "$ROOT/src/backroot-hello/backroot-hello" "$DEST/usr/local/bin/backroot-hello"
 install -Dm755 "$ROOT/src/power-pdf/powerpdf" "$DEST/usr/local/bin/powerpdf"
+install -Dm755 "$ROOT/src/br8-install/br8-install" "$DEST/usr/local/bin/br8-install"
+install -Dm755 "$ROOT/src/br8-oobe/br8-oobe" "$DEST/usr/local/bin/br8-oobe"
+install -Dm755 "$ROOT/rootfs-overlay/usr/lib/backroot8/is-live-boot.sh" \
+    "$DEST/usr/lib/backroot8/is-live-boot.sh"
+install -Dm755 "$ROOT/rootfs-overlay/usr/lib/backroot8/br8-install-to-disk.sh" \
+    "$DEST/usr/lib/backroot8/br8-install-to-disk.sh"
+install -Dm755 "$ROOT/rootfs-overlay/usr/lib/backroot8/br8-oobe-setup.sh" \
+    "$DEST/usr/lib/backroot8/br8-oobe-setup.sh"
+install -Dm755 "$ROOT/rootfs-overlay/usr/lib/backroot8/br8-oobe-finish-login.sh" \
+    "$DEST/usr/lib/backroot8/br8-oobe-finish-login.sh"
+install -Dm755 "$ROOT/rootfs-overlay/usr/lib/backroot8/br8-desktop-session.sh" \
+    "$DEST/usr/lib/backroot8/br8-desktop-session.sh"
+install -Dm755 "$ROOT/rootfs-overlay/usr/lib/backroot8/br8-list-install-disks.sh" \
+    "$DEST/usr/lib/backroot8/br8-list-install-disks.sh"
 
 install -Dm644 "$ROOT/rootfs-overlay/usr/share/backroot/README" \
     "$DEST/usr/share/backroot/README"
@@ -48,8 +65,19 @@ install -Dm644 "$ROOT/rootfs-overlay/usr/share/backgrounds/backroot8.jpg" \
     "$DEST/usr/share/backgrounds/backroot8.jpg"
 install -Dm644 "$ROOT/rootfs-overlay/usr/share/backroot8/bootscreen.png" \
     "$DEST/usr/share/backroot8/bootscreen.png"
+install -Dm644 "$ROOT/rootfs-overlay/usr/share/backroot8/install-banner.png" \
+    "$DEST/usr/share/backroot8/install-banner.png"
 install -Dm644 "$ROOT/rootfs-overlay/usr/share/backroot8/default-user.png" \
     "$DEST/usr/share/backroot8/default-user.png"
+if [ -d "$ROOT/rootfs-overlay/usr/share/backroot8/oobe-wallpapers" ]; then
+    mkdir -p "$DEST/usr/share/backroot8/oobe-wallpapers"
+    for _wp in "$ROOT/rootfs-overlay/usr/share/backroot8/oobe-wallpapers/"*.jpg; do
+        [ -f "$_wp" ] || continue
+        install -Dm644 "$_wp" "$DEST/usr/share/backroot8/oobe-wallpapers/$(basename "$_wp")"
+    done
+fi
+install -Dm644 "$ROOT/rootfs-overlay/etc/tmpfiles.d/br8-oobe.conf" \
+    "$DEST/etc/tmpfiles.d/br8-oobe.conf"
 install -Dm755 "$ROOT/rootfs-overlay/usr/share/backroot8/show-splash.sh" \
     "$DEST/usr/share/backroot8/show-splash.sh"
 install -Dm755 "$ROOT/rootfs-overlay/usr/share/backroot8/br8-panel-launcher.sh" \

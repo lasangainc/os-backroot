@@ -12,8 +12,8 @@
 #include <strings.h>
 #include <time.h>
 #include <unistd.h>
-#include <sys/select.h>
 #include <sys/stat.h>
+#include <sys/select.h>
 
 #include "emblem.h"
 
@@ -1008,8 +1008,22 @@ int main(void) {
     gc = XCreateGC(dpy, panel, 0, NULL);
     load_desktop_icon_map();
     emblem_init();
+    start_menu_open = 0;
     XMapRaised(dpy, panel);
     draw_panel();
+    sync_panel_visibility();
+    if (!read_start_open() && !read_metro_active()) {
+        XMapRaised(dpy, panel);
+        draw_panel();
+    }
+    {
+        mkdir("/run/br8-oobe", 0755);
+        FILE *rf = fopen("/run/br8-oobe/panel-ready", "w");
+        if (rf) {
+            fputc('1', rf);
+            fclose(rf);
+        }
+    }
     last_rev = read_panel_rev();
 
     int xfd = ConnectionNumber(dpy);
