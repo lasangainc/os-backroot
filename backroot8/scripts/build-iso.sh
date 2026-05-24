@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build a hybrid BIOS+UEFI bootable Backroot 8 live ISO (Milestone 1).
+# Build a hybrid BIOS+UEFI bootable Backroot 8 live ISO.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -7,7 +7,7 @@ VM_DIR="$ROOT/vm"
 ROOTFS="$VM_DIR/rootfs"
 ISO_STAGING="$VM_DIR/iso-staging"
 ISO_OUT="${ISO_OUT:-$VM_DIR/backroot8-live.iso}"
-VERSION_TAG="${BACKROOT8_VERSION:-8-milestone1}"
+VERSION_TAG="${BACKROOT8_VERSION:-8-milestone1.5}"
 
 log() { echo "[backroot8-iso] $*"; }
 
@@ -91,7 +91,7 @@ grub-mkrescue \
     -o "$ISO_OUT" \
     "$ISO_STAGING" \
     -partition_cyl_align off \
-    -V "BACKROOT8_M1"
+    -V "BACKROOT8_M1_5"
 
 BUILD_USER="${SUDO_USER:-${USER:-root}}"
 if [[ -n "$BUILD_USER" && "$BUILD_USER" != "root" ]]; then

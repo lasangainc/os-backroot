@@ -2,7 +2,7 @@
 
 A minimal desktop environment built from scratch on **Arch Linux** with the precompiled **`linux`** kernel package.
 
-**Milestone 1** ships as a bootable live ISO (`vm/backroot8-live.iso`) for USB, optical media, and QEMU.
+**Milestone 1.5** ships as a bootable live ISO (`vm/backroot8-live.iso`) for USB, optical media, and QEMU. See [RELEASE-MILESTONE1.5.md](RELEASE-MILESTONE1.5.md) (previous: [Milestone 1](RELEASE-MILESTONE1.md)).
 
 ## Features
 
@@ -36,7 +36,7 @@ sudo ./scripts/build-iso.sh
 
 Credentials in the live system: `root` / `backroot8`
 
-See [RELEASE-MILESTONE1.md](RELEASE-MILESTONE1.md) for USB writing and iteration workflow.
+See [RELEASE-MILESTONE1.5.md](RELEASE-MILESTONE1.5.md) for USB writing, GitHub release, and iteration workflow.
 
 ## Iterate and rebuild
 
