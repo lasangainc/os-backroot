@@ -14,8 +14,13 @@
 #include <sys/wait.h>
 #include <ctype.h>
 #include <sys/stat.h>
+#include <time.h>
 
 #include "../../include/br8-metro.h"
+
+#define STB_IMAGE_IMPLEMENTATION
+#define STBI_NO_SIMD
+#include "../br8-start/stb_image.h"
 
 #define COL_BG_R 70
 #define COL_BG_G 29
@@ -42,11 +47,19 @@
 #define BTN_H 44
 #define USER_MAX 32
 #define PASS_MAX 64
+#define WALLPAPER_N 3
+#define THUMB_W 280
+#define THUMB_H 158
+#define THUMB_GAP 24
 
 #define SETUP_SCRIPT "/usr/lib/backroot8/br8-oobe-setup.sh"
 #define FINISH_LOGIN_SCRIPT "/usr/lib/backroot8/br8-oobe-finish-login.sh"
+#define KEEP_LOADING "/run/br8-oobe/keep-loading"
+#define PANEL_READY "/run/br8-oobe/panel-ready"
+#define WALLPAPER_CHOICE "/run/br8-oobe/wallpaper"
 
 typedef enum {
+    PHASE_PERSONALIZE,
     PHASE_ACCOUNT,
     PHASE_LOADING
 } Phase;
@@ -58,6 +71,12 @@ typedef enum {
     FOCUS_NONE
 } FocusField;
 
+static const char *const WALLPAPER_THUMBS[WALLPAPER_N] = {
+    "/usr/share/backroot8/oobe-wallpapers/thumb-wallpaper-1.jpg",
+    "/usr/share/backroot8/oobe-wallpapers/thumb-wallpaper-2.jpg",
+    "/usr/share/backroot8/oobe-wallpapers/thumb-wallpaper-3.jpg",
+};
+
 static Display *dpy;
 static int screen;
 static Window root, win;
@@ -66,14 +85,21 @@ static Visual *visual;
 static Colormap cmap;
 static int win_w, win_h;
 static XftFont *font_header, *font_sub, *font_label, *font_field, *font_btn;
-static Phase phase = PHASE_ACCOUNT;
+static Phase phase = PHASE_PERSONALIZE;
 static FocusField focus = FOCUS_USER;
 static char username[USER_MAX];
 static char password[PASS_MAX];
 static char password2[PASS_MAX];
+static int wallpaper_sel;
 static int finish_hover;
+static int next_hover;
 static int setup_pid;
 static double loading_anim;
+static int loading_only;
+static Pixmap thumb_pm[WALLPAPER_N];
+static int thumb_loaded[WALLPAPER_N];
+static int thumb_dw[WALLPAPER_N];
+static int thumb_dh[WALLPAPER_N];
 
 static unsigned long rgb(int r, int g, int b) {
     XColor c;
@@ -188,6 +214,89 @@ static int is_live_boot(void) {
     return strstr(buf, "backroot8iso") != NULL;
 }
 
+static void load_thumb(int idx) {
+    int iw, ih, comp;
+    unsigned char *img;
+
+    if (idx < 0 || idx >= WALLPAPER_N || thumb_loaded[idx])
+        return;
+    img = stbi_load(WALLPAPER_THUMBS[idx], &iw, &ih, &comp, 4);
+    if (!img || iw <= 0 || ih <= 0)
+        return;
+
+    double scale = (double)THUMB_W / (double)iw;
+    if ((double)THUMB_H / (double)ih < scale)
+        scale = (double)THUMB_H / (double)ih;
+    thumb_dw[idx] = (int)(iw * scale);
+    thumb_dh[idx] = (int)(ih * scale);
+    if (thumb_dw[idx] < 1)
+        thumb_dw[idx] = 1;
+    if (thumb_dh[idx] < 1)
+        thumb_dh[idx] = 1;
+
+    thumb_pm[idx] = XCreatePixmap(dpy, win, THUMB_W, THUMB_H, DefaultDepth(dpy, screen));
+    if (!thumb_pm[idx]) {
+        stbi_image_free(img);
+        return;
+    }
+    XSetForeground(dpy, gc, rgb(COL_FIELD_R, COL_FIELD_G, COL_FIELD_B));
+    XFillRectangle(dpy, thumb_pm[idx], gc, 0, 0, THUMB_W, THUMB_H);
+
+    XImage *xi = XCreateImage(dpy, visual, DefaultDepth(dpy, screen), ZPixmap, 0,
+        NULL, (unsigned int)THUMB_W, (unsigned int)THUMB_H, 32, 0);
+    if (!xi) {
+        XFreePixmap(dpy, thumb_pm[idx]);
+        thumb_pm[idx] = 0;
+        stbi_image_free(img);
+        return;
+    }
+    xi->data = (char *)calloc((size_t)THUMB_W * (size_t)THUMB_H, 4);
+    if (!xi->data) {
+        XDestroyImage(xi);
+        XFreePixmap(dpy, thumb_pm[idx]);
+        thumb_pm[idx] = 0;
+        stbi_image_free(img);
+        return;
+    }
+    int ox = (THUMB_W - thumb_dw[idx]) / 2;
+    int oy = (THUMB_H - thumb_dh[idx]) / 2;
+    for (int y = 0; y < thumb_dh[idx]; y++) {
+        int sy = (int)((double)y / scale);
+        if (sy >= ih)
+            sy = ih - 1;
+        for (int x = 0; x < thumb_dw[idx]; x++) {
+            int sx = (int)((double)x / scale);
+            if (sx >= iw)
+                sx = iw - 1;
+            int i = (sy * iw + sx) * 4;
+            unsigned long pixel = ((unsigned long)img[i] << 16) |
+                ((unsigned long)img[i + 1] << 8) | (unsigned long)img[i + 2];
+            XPutPixel(xi, (int)(ox + x), (int)(oy + y), pixel);
+        }
+    }
+    GC tgc = XCreateGC(dpy, thumb_pm[idx], 0, NULL);
+    XPutImage(dpy, thumb_pm[idx], tgc, xi, 0, 0, 0, 0, (unsigned int)THUMB_W, (unsigned int)THUMB_H);
+    XFreeGC(dpy, tgc);
+    free(xi->data);
+    XDestroyImage(xi);
+    stbi_image_free(img);
+    thumb_loaded[idx] = 1;
+}
+
+static void load_all_thumbs(void) {
+    for (int i = 0; i < WALLPAPER_N; i++)
+        load_thumb(i);
+}
+
+static void save_wallpaper_choice(void) {
+    mkdir("/run/br8-oobe", 0755);
+    FILE *fp = fopen(WALLPAPER_CHOICE, "w");
+    if (fp) {
+        fprintf(fp, "%d\n", wallpaper_sel);
+        fclose(fp);
+    }
+}
+
 static void draw_field_box(int fx, int fy, const char *value, const char *placeholder,
         int masked, int active) {
     int border_r = active ? COL_ACCENT_R : 200;
@@ -230,6 +339,61 @@ static void draw_field_row(int row_y, const char *label, const char *value,
     draw_field_box(field_x, row_y, value, placeholder, masked, active);
 }
 
+static void draw_finish_btn(int btn_x, int btn_y, const char *label, int hover) {
+    int bg_r = hover ? 255 : COL_ACCENT_R;
+    int bg_g = hover ? 255 : COL_ACCENT_G;
+    int bg_b = hover ? 255 : COL_ACCENT_B;
+    int fg_r = hover ? COL_BG_R : 255;
+    int fg_g = hover ? COL_BG_G : 255;
+    int fg_b = hover ? COL_BG_B : 255;
+    XSetForeground(dpy, gc, rgb(bg_r, bg_g, bg_b));
+    XFillRectangle(dpy, win, gc, btn_x, btn_y, BTN_W, BTN_H);
+    XSetForeground(dpy, gc, rgb(255, 255, 255));
+    XDrawRectangle(dpy, win, gc, btn_x, btn_y, BTN_W - 1, BTN_H - 1);
+    int blw = text_width(font_btn, label);
+    xft_draw(win, btn_x + (BTN_W - blw) / 2, btn_y + text_baseline(BTN_H, font_btn),
+        label, fg_r, fg_g, fg_b, font_btn);
+}
+
+static void personalize_layout(int *thumbs_y, int *btn_x, int *btn_y, int *thumb_x0) {
+    int header_h = font_header ? font_header->height : 48;
+    int sub_h = font_sub ? font_sub->height : 22;
+    *thumbs_y = PAD + header_h + sub_h + 56;
+    int total_w = WALLPAPER_N * THUMB_W + (WALLPAPER_N - 1) * THUMB_GAP;
+    *thumb_x0 = (win_w - total_w) / 2;
+    *btn_x = win_w - PAD - BTN_W;
+    *btn_y = win_h - PAD - BTN_H;
+}
+
+static void draw_personalize(void) {
+    const char *title = "Make this computer yours";
+    const char *subtitle = "Choose a background for your desktop.";
+
+    int header_h = font_header ? font_header->height : 48;
+    xft_draw(win, PAD, PAD + text_baseline(header_h, font_header),
+        title, COL_TEXT_R, COL_TEXT_G, COL_TEXT_B, font_header);
+    xft_draw(win, PAD, PAD + header_h + 20 + text_baseline(font_sub ? font_sub->height : 22, font_sub),
+        subtitle, COL_MUTED_R, COL_MUTED_G, COL_MUTED_B, font_sub);
+
+    int thumbs_y, btn_x, btn_y, thumb_x0;
+    personalize_layout(&thumbs_y, &btn_x, &btn_y, &thumb_x0);
+
+    for (int i = 0; i < WALLPAPER_N; i++) {
+        int tx = thumb_x0 + i * (THUMB_W + THUMB_GAP);
+        int sel = (i == wallpaper_sel);
+        XSetForeground(dpy, gc, rgb(sel ? COL_ACCENT_R : 200, sel ? COL_ACCENT_G : 200,
+            sel ? COL_ACCENT_B : 210));
+        XDrawRectangle(dpy, win, gc, tx - 2, thumbs_y - 2, THUMB_W + 4, THUMB_H + 4);
+        if (thumb_loaded[i])
+            XCopyArea(dpy, thumb_pm[i], win, gc, 0, 0, THUMB_W, THUMB_H, tx, thumbs_y);
+        else {
+            XSetForeground(dpy, gc, rgb(COL_FIELD_R, COL_FIELD_G, COL_FIELD_B));
+            XFillRectangle(dpy, win, gc, tx, thumbs_y, THUMB_W, THUMB_H);
+        }
+    }
+    draw_finish_btn(btn_x, btn_y, "Next", next_hover);
+}
+
 static void account_layout(int *title_y, int *row_user, int *row_pass, int *row_pass2,
         int *btn_x, int *btn_y) {
     int header_h = font_header ? font_header->height : 48;
@@ -251,33 +415,18 @@ static void draw_account(void) {
 
     int title_y, row_user, row_pass, row_pass2, btn_x, btn_y;
     account_layout(&title_y, &row_user, &row_pass, &row_pass2, &btn_x, &btn_y);
+    (void)title_y;
 
     int header_h = font_header ? font_header->height : 48;
     xft_draw(win, PAD, PAD + text_baseline(header_h, font_header),
         title, COL_TEXT_R, COL_TEXT_G, COL_TEXT_B, font_header);
-
-    int sub_y = PAD + header_h + 20;
-    xft_draw(win, PAD, sub_y + text_baseline(font_sub ? font_sub->height : 22, font_sub),
+    xft_draw(win, PAD, PAD + header_h + 20 + text_baseline(font_sub ? font_sub->height : 22, font_sub),
         subtitle, COL_MUTED_R, COL_MUTED_G, COL_MUTED_B, font_sub);
 
     draw_field_row(row_user, "User name", username, "Example: John", 0, focus == FOCUS_USER);
     draw_field_row(row_pass, "Password", password, NULL, 1, focus == FOCUS_PASS);
     draw_field_row(row_pass2, "Reenter password", password2, NULL, 1, focus == FOCUS_PASS2);
-
-    int bg_r = finish_hover ? 255 : COL_ACCENT_R;
-    int bg_g = finish_hover ? 255 : COL_ACCENT_G;
-    int bg_b = finish_hover ? 255 : COL_ACCENT_B;
-    int fg_r = finish_hover ? COL_BG_R : 255;
-    int fg_g = finish_hover ? COL_BG_G : 255;
-    int fg_b = finish_hover ? COL_BG_B : 255;
-    XSetForeground(dpy, gc, rgb(bg_r, bg_g, bg_b));
-    XFillRectangle(dpy, win, gc, btn_x, btn_y, BTN_W, BTN_H);
-    XSetForeground(dpy, gc, rgb(255, 255, 255));
-    XDrawRectangle(dpy, win, gc, btn_x, btn_y, BTN_W - 1, BTN_H - 1);
-    const char *bl = "Finish";
-    int blw = text_width(font_btn, bl);
-    xft_draw(win, btn_x + (BTN_W - blw) / 2, btn_y + text_baseline(BTN_H, font_btn),
-        bl, fg_r, fg_g, fg_b, font_btn);
+    draw_finish_btn(btn_x, btn_y, "Finish", finish_hover);
 }
 
 static void draw_loading(void) {
@@ -309,7 +458,9 @@ static void draw_loading(void) {
 static void draw_all(void) {
     XSetForeground(dpy, gc, rgb(COL_BG_R, COL_BG_G, COL_BG_B));
     XFillRectangle(dpy, win, gc, 0, 0, win_w, win_h);
-    if (phase == PHASE_ACCOUNT)
+    if (phase == PHASE_PERSONALIZE)
+        draw_personalize();
+    else if (phase == PHASE_ACCOUNT)
         draw_account();
     else
         draw_loading();
@@ -339,15 +490,13 @@ static void start_setup(void) {
     if (!valid_username(username) || !passwords_ok())
         return;
 
+    save_wallpaper_choice();
     phase = PHASE_LOADING;
     draw_all();
 
-    char user_arg[USER_MAX + 16];
     char pass_file[128];
-    snprintf(user_arg, sizeof user_arg, "BR8_USER=%s", username);
     snprintf(pass_file, sizeof pass_file, "/run/br8-oobe/pass");
-
-    mkdir("/run/br8-oobe", 0700);
+    mkdir("/run/br8-oobe", 0755);
     FILE *fp = fopen(pass_file, "w");
     if (fp) {
         fputs(password, fp);
@@ -358,12 +507,17 @@ static void start_setup(void) {
 
     pid_t pid = fork();
     if (pid == 0) {
-        putenv(user_arg);
         execl(SETUP_SCRIPT, SETUP_SCRIPT, username, pass_file, (char *)NULL);
         _exit(127);
     }
     if (pid > 0)
         setup_pid = (int)pid;
+}
+
+static void advance_personalize(void) {
+    save_wallpaper_choice();
+    phase = PHASE_ACCOUNT;
+    draw_all();
 }
 
 static char *active_field(void) {
@@ -398,9 +552,19 @@ static void cycle_focus(int backward) {
     }
 }
 
+static int point_in_rect(int x, int y, int rx, int ry, int rw, int rh) {
+    return x >= rx && x < rx + rw && y >= ry && y < ry + rh;
+}
+
 static void handle_key(XKeyEvent *kev) {
+    if (phase == PHASE_PERSONALIZE) {
+        if (XLookupKeysym(kev, 0) == XK_Return || XLookupKeysym(kev, 0) == XK_KP_Enter)
+            advance_personalize();
+        return;
+    }
     if (phase != PHASE_ACCOUNT)
         return;
+
     char *field = active_field();
     if (!field)
         return;
@@ -433,15 +597,26 @@ static void handle_key(XKeyEvent *kev) {
     draw_all();
 }
 
-static int point_in_rect(int x, int y, int rx, int ry, int rw, int rh) {
-    return x >= rx && x < rx + rw && y >= ry && y < ry + rh;
-}
-
 static void handle_click(int x, int y) {
+    if (phase == PHASE_PERSONALIZE) {
+        int thumbs_y, btn_x, btn_y, thumb_x0;
+        personalize_layout(&thumbs_y, &btn_x, &btn_y, &thumb_x0);
+        for (int i = 0; i < WALLPAPER_N; i++) {
+            int tx = thumb_x0 + i * (THUMB_W + THUMB_GAP);
+            if (point_in_rect(x, y, tx, thumbs_y, THUMB_W, THUMB_H))
+                wallpaper_sel = i;
+        }
+        if (point_in_rect(x, y, btn_x, btn_y, BTN_W, BTN_H))
+            advance_personalize();
+        draw_all();
+        return;
+    }
     if (phase != PHASE_ACCOUNT)
         return;
+
     int title_y, row_user, row_pass, row_pass2, btn_x, btn_y;
     account_layout(&title_y, &row_user, &row_pass, &row_pass2, &btn_x, &btn_y);
+    (void)title_y;
     int field_x = PAD + LABEL_W;
 
     if (point_in_rect(x, y, field_x, row_user, FIELD_W, FIELD_H))
@@ -456,18 +631,31 @@ static void handle_click(int x, int y) {
 }
 
 static void update_hover(int x, int y) {
-    if (phase != PHASE_ACCOUNT)
+    int nh = 0, nn = 0;
+    if (phase == PHASE_PERSONALIZE) {
+        int thumbs_y, btn_x, btn_y, thumb_x0;
+        personalize_layout(&thumbs_y, &btn_x, &btn_y, &thumb_x0);
+        (void)thumbs_y;
+        (void)thumb_x0;
+        nn = point_in_rect(x, y, btn_x, btn_y, BTN_W, BTN_H);
+        if (nn != next_hover) {
+            next_hover = nn;
+            draw_all();
+        }
         return;
-    int title_y, row_user, row_pass, row_pass2, btn_x, btn_y;
-    account_layout(&title_y, &row_user, &row_pass, &row_pass2, &btn_x, &btn_y);
-    (void)title_y;
-    (void)row_user;
-    (void)row_pass;
-    (void)row_pass2;
-    int h = point_in_rect(x, y, btn_x, btn_y, BTN_W, BTN_H);
-    if (h != finish_hover) {
-        finish_hover = h;
-        draw_all();
+    }
+    if (phase == PHASE_ACCOUNT) {
+        int title_y, row_user, row_pass, row_pass2, btn_x, btn_y;
+        account_layout(&title_y, &row_user, &row_pass, &row_pass2, &btn_x, &btn_y);
+        (void)title_y;
+        (void)row_user;
+        (void)row_pass;
+        (void)row_pass2;
+        nh = point_in_rect(x, y, btn_x, btn_y, BTN_W, BTN_H);
+        if (nh != finish_hover) {
+            finish_hover = nh;
+            draw_all();
+        }
     }
 }
 
@@ -491,10 +679,73 @@ static void finish_login(void) {
     }
 }
 
-int main(void) {
-    if (is_live_boot() || !oobe_pending())
-        return 0;
+static int panel_is_ready(void) {
+    return access(PANEL_READY, F_OK) == 0;
+}
 
+static void clear_loading_state(void) {
+    unlink(KEEP_LOADING);
+    unlink(PANEL_READY);
+}
+
+static int run_event_loop(int until_panel) {
+    int xfd = ConnectionNumber(dpy);
+    int running = 1;
+  time_t start = time(NULL);
+
+    while (running) {
+        struct timeval tv = { .tv_sec = 0,
+            .tv_usec = (phase == PHASE_LOADING || loading_only) ? 120000 : 200000 };
+        fd_set fds;
+        FD_ZERO(&fds);
+        FD_SET(xfd, &fds);
+        select(xfd + 1, &fds, NULL, NULL, &tv);
+
+        if (phase == PHASE_LOADING || loading_only) {
+            loading_anim += 0.15;
+            draw_all();
+        }
+
+        if (until_panel && panel_is_ready()) {
+            clear_loading_state();
+            running = 0;
+            continue;
+        }
+        if (until_panel && time(NULL) - start > 120) {
+            clear_loading_state();
+            running = 0;
+            continue;
+        }
+
+        if (setup_pid > 0) {
+            int st;
+            if (waitpid(setup_pid, &st, WNOHANG) > 0) {
+                setup_pid = 0;
+                unlink("/run/br8-oobe/pass");
+                finish_login();
+                running = 0;
+            }
+        }
+
+        while (XPending(dpy)) {
+            XEvent ev;
+            XNextEvent(dpy, &ev);
+            if (ev.type == Expose && ev.xexpose.count == 0)
+                draw_all();
+            else if (ev.type == ConfigureNotify)
+                resize_window(ev.xconfigure.width, ev.xconfigure.height);
+            else if (!loading_only && ev.type == KeyPress)
+                handle_key(&ev.xkey);
+            else if (!loading_only && ev.type == ButtonPress)
+                handle_click((int)ev.xbutton.x, (int)ev.xbutton.y);
+            else if (!loading_only && ev.type == MotionNotify)
+                update_hover((int)ev.xmotion.x, (int)ev.xmotion.y);
+        }
+    }
+    return 0;
+}
+
+static int open_display_window(void) {
     dpy = XOpenDisplay(NULL);
     if (!dpy) {
         fprintf(stderr, "br8-oobe: cannot open display\n");
@@ -523,47 +774,31 @@ int main(void) {
         ExposureMask | StructureNotifyMask | KeyPressMask | ButtonPressMask |
         PointerMotionMask);
     XMapRaised(dpy, win);
-    draw_all();
+    return 0;
+}
 
-    int xfd = ConnectionNumber(dpy);
-    int running = 1;
-    while (running) {
-        struct timeval tv = { .tv_sec = 0, .tv_usec = phase == PHASE_LOADING ? 120000 : 200000 };
-        fd_set fds;
-        FD_ZERO(&fds);
-        FD_SET(xfd, &fds);
-        select(xfd + 1, &fds, NULL, NULL, &tv);
+int main(int argc, char **argv) {
+    loading_only = (argc > 1 && strcmp(argv[1], "--loading") == 0);
 
-        if (phase == PHASE_LOADING) {
-            loading_anim += 0.15;
-            draw_all();
-        }
-
-        if (setup_pid > 0) {
-            int st;
-            if (waitpid(setup_pid, &st, WNOHANG) > 0) {
-                setup_pid = 0;
-                unlink("/run/br8-oobe/pass");
-                finish_login();
-                running = 0;
-            }
-        }
-
-        while (XPending(dpy)) {
-            XEvent ev;
-            XNextEvent(dpy, &ev);
-            if (ev.type == Expose && ev.xexpose.count == 0)
-                draw_all();
-            else if (ev.type == ConfigureNotify)
-                resize_window(ev.xconfigure.width, ev.xconfigure.height);
-            else if (ev.type == KeyPress)
-                handle_key(&ev.xkey);
-            else if (ev.type == ButtonPress)
-                handle_click((int)ev.xbutton.x, (int)ev.xbutton.y);
-            else if (ev.type == MotionNotify)
-                update_hover((int)ev.xmotion.x, (int)ev.xmotion.y);
-        }
+    if (loading_only) {
+        if (access(KEEP_LOADING, F_OK) != 0)
+            return 0;
+        if (open_display_window())
+            return 1;
+        phase = PHASE_LOADING;
+        draw_all();
+        run_event_loop(1);
+        return 0;
     }
 
+    if (is_live_boot() || !oobe_pending())
+        return 0;
+
+    if (open_display_window())
+        return 1;
+
+    load_all_thumbs();
+    draw_all();
+    run_event_loop(0);
     return 0;
 }

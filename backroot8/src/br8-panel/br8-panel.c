@@ -12,8 +12,8 @@
 #include <strings.h>
 #include <time.h>
 #include <unistd.h>
-#include <sys/select.h>
 #include <sys/stat.h>
+#include <sys/select.h>
 
 #include "emblem.h"
 
@@ -1010,6 +1010,14 @@ int main(void) {
     emblem_init();
     XMapRaised(dpy, panel);
     draw_panel();
+    {
+        mkdir("/run/br8-oobe", 0755);
+        FILE *rf = fopen("/run/br8-oobe/panel-ready", "w");
+        if (rf) {
+            fputc('1', rf);
+            fclose(rf);
+        }
+    }
     last_rev = read_panel_rev();
 
     int xfd = ConnectionNumber(dpy);
