@@ -107,8 +107,8 @@ systemctl disable getty@tty1.service
 sed -i 's/^HOOKS=.*/HOOKS=(base udev modconf kms block plymouth backroot8_splash backroot8_iso backroot8_root filesystems fsck)/' /etc/mkinitcpio.conf
 grep -q '^MODULES=.*overlay' /etc/mkinitcpio.conf || \
     sed -i 's/^MODULES=(/MODULES=(overlay /' /etc/mkinitcpio.conf
-grep -q 'bochs_drm' /etc/mkinitcpio.conf || \
-    sed -i 's/^MODULES=(/MODULES=(bochs_drm simpledrm /' /etc/mkinitcpio.conf
+grep -q ' bochs ' /etc/mkinitcpio.conf || \
+    sed -i 's/^MODULES=(/MODULES=(bochs /' /etc/mkinitcpio.conf
 pacman -Syu --noconfirm
 CHROOT
 

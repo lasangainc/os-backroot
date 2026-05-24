@@ -7,8 +7,7 @@ br8_fb_splash() {
     [ -x /usr/bin/fbi ] || return 0
     [ -r /usr/share/backroot8/bootscreen.png ] || return 0
 
-    modprobe bochs_drm 2>/dev/null
-    modprobe simpledrm 2>/dev/null
+    modprobe bochs 2>/dev/null
     sleep 0.2
 
     if [ ! -c /dev/fb0 ]; then
