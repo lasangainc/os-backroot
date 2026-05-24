@@ -40,9 +40,12 @@
 #define CONFIG_PATH CONFIG_DIR "/start_layout"
 #define OPEN_SLIDE_X 100
 #define OPEN_TILE_DUR_MS 170.0
-#define OPEN_TILE_STAGGER_MS 48.0
+#define OPEN_TILE_STAGGER_MS 80.0
 #define HOME_HEADER_DELAY_MS 110.0
 #define HOME_HEADER_SLIDE_MS 220.0
+#define APPS_REVEAL_PAD 32
+#define HOME_HEADER_REST_X MARGIN
+#define HOME_HEADER_OFF_X (MARGIN + OPEN_SLIDE_X + 48)
 #define SMOOTH_TAU_MS 40.0
 #define DRAG_THRESHOLD 6
 #define DRAG_SCALE 0.88
@@ -106,6 +109,8 @@ static int n_apps;
 
 static double open_anim;
 static struct timespec open_anim_start;
+static int menu_closing;
+static struct timespec close_anim_start;
 static int open_start_x[MAX_HOME_TILES];
 static int open_stagger_rank[MAX_HOME_TILES];
 static int home_header_x;
@@ -151,6 +156,10 @@ static int ctx_is_tile;
 
 static void draw_all(void);
 static void mark_dirty(void);
+static void finish_hide(void);
+static void begin_close_animation(void);
+static int apps_section_visible(void);
+static void apply_menu_motion(double elapsed);
 static int user_avatar_target_x(void);
 static void layout_home(void);
 static void save_layout(void);
@@ -362,9 +371,10 @@ static void set_open(int open) {
     XFlush(dpy);
 }
 
-static void hide_menu(void) {
-    if (!visible)
+static void finish_hide(void) {
+    if (!visible && !menu_closing)
         return;
+    menu_closing = 0;
     dragging = 0;
     drag_tile_idx = -1;
     ctx_visible = 0;
@@ -378,9 +388,28 @@ static void hide_menu(void) {
     set_open(0);
 }
 
+static void begin_close_animation(void) {
+    if (!visible || menu_closing)
+        return;
+    menu_closing = 1;
+    dragging = 0;
+    drag_tile_idx = -1;
+    ctx_visible = 0;
+    layout_animating = 0;
+    open_anim = 1.0;
+    clock_gettime(CLOCK_MONOTONIC, &close_anim_start);
+    clock_gettime(CLOCK_MONOTONIC, &last_tick);
+    layout_home();
+    build_open_stagger();
+    set_open(0);
+    invalidate_static();
+    mark_dirty();
+}
+
 static void begin_open_animation(void) {
+    menu_closing = 0;
     open_anim = 0.0;
-    home_header_x = -OPEN_SLIDE_X;
+    home_header_x = HOME_HEADER_OFF_X;
     user_avatar_x = win_w + 40;
     clock_gettime(CLOCK_MONOTONIC, &open_anim_start);
     clock_gettime(CLOCK_MONOTONIC, &last_tick);
@@ -409,13 +438,22 @@ static void sync_start_win_size(void) {
 }
 
 static void show_menu(void) {
-    if (visible)
+    if (visible && !menu_closing)
         return;
     scroll_y = 0;
+    if (menu_closing) {
+        menu_closing = 0;
+        sync_start_win_size();
+        begin_open_animation();
+        set_open(1);
+        draw_all();
+        return;
+    }
     visible = 1;
     ctx_visible = 0;
     sync_start_win_size();
     XMapRaised(dpy, start_win);
+    set_open(1);
     begin_open_animation();
     draw_all();
 }
@@ -475,7 +513,8 @@ static void spawn_exec(const char *cmd) {
 }
 
 static void launch_action(Action act, const char *exec_cmd) {
-    hide_menu();
+    if (visible)
+        begin_close_animation();
     switch (act) {
     case ACT_TERMINAL: spawn_terminal(); break;
     case ACT_DOLPHIN: spawn_dolphin(); break;
@@ -808,7 +847,20 @@ static void layout_content(void) {
         scroll_y = 0;
 }
 
+static int apps_reveal_scroll_y(void) {
+    int y = home_h - win_h + APPS_REVEAL_PAD;
+    if (y < APPS_REVEAL_PAD)
+        y = APPS_REVEAL_PAD;
+    return y;
+}
+
+static int apps_section_visible(void) {
+    return scroll_y >= apps_reveal_scroll_y();
+}
+
 static int animating_now(void) {
+    if (menu_closing)
+        return 1;
     if (open_anim < 1.0)
         return 1;
     if (layout_animating)
@@ -818,6 +870,39 @@ static int animating_now(void) {
     if (frame_dirty)
         return 1;
     return 0;
+}
+
+static void apply_menu_motion(double elapsed) {
+    for (int i = 0; i < n_home_tiles; i++) {
+        Tile *t = &home_tiles[i];
+        int rank = open_stagger_rank[i];
+        if (rank >= n_tile_order)
+            rank = n_tile_order - 1;
+        double tile_el = elapsed - rank * OPEN_TILE_STAGGER_MS;
+        double te = tile_el / OPEN_TILE_DUR_MS;
+        if (te < 0.0)
+            te = 0.0;
+        if (te > 1.0)
+            te = 1.0;
+        double e = ease_out_cubic(te);
+        t->anim_x = lerp_i(open_start_x[i], t->layout_x, e);
+        t->anim_y = t->layout_y;
+        t->anim_w = lerp_i((int)(t->layout_w * 0.88), t->layout_w, e);
+        t->anim_h = lerp_i((int)(t->layout_h * 0.88), t->layout_h, e);
+    }
+
+    double header_el = elapsed - HOME_HEADER_DELAY_MS;
+    if (header_el < 0.0) {
+        home_header_x = HOME_HEADER_OFF_X;
+        user_avatar_x = win_w + 40;
+    } else {
+        double he = header_el / HOME_HEADER_SLIDE_MS;
+        if (he > 1.0)
+            he = 1.0;
+        double e = ease_out_cubic(he);
+        home_header_x = lerp_i(HOME_HEADER_OFF_X, HOME_HEADER_REST_X, e);
+        user_avatar_x = lerp_i(win_w + 40, user_avatar_target_x(), e);
+    }
 }
 
 static int smooth_step(int cur, int target, double k) {
@@ -869,50 +954,24 @@ static void tick_animations(void) {
         dt = 50.0;
     last_tick = now;
 
-    if (open_anim < 1.0) {
+    if (menu_closing) {
+        double elapsed = now_ms() - (close_anim_start.tv_sec * 1000.0 +
+            close_anim_start.tv_nsec / 1000000.0);
+        double total = open_timeline_ms();
+        if (elapsed >= total) {
+            finish_hide();
+            return;
+        }
+        apply_menu_motion(total - elapsed);
+        mark_dirty();
+    } else if (open_anim < 1.0) {
         double elapsed = now_ms() - (open_anim_start.tv_sec * 1000.0 +
             open_anim_start.tv_nsec / 1000000.0);
         double total = open_timeline_ms();
         open_anim = elapsed / total;
         if (open_anim > 1.0)
             open_anim = 1.0;
-
-        for (int i = 0; i < n_home_tiles; i++) {
-            Tile *t = &home_tiles[i];
-            int rank = open_stagger_rank[i];
-            if (rank >= n_tile_order)
-                rank = n_tile_order - 1;
-            double tile_el = elapsed - rank * OPEN_TILE_STAGGER_MS;
-            double te = tile_el / OPEN_TILE_DUR_MS;
-            if (te < 0.0)
-                te = 0.0;
-            if (te > 1.0)
-                te = 1.0;
-            double e = ease_out_cubic(te);
-            t->anim_x = lerp_i(open_start_x[i], t->layout_x, e);
-            t->anim_y = t->layout_y;
-            t->anim_w = lerp_i((int)(t->layout_w * 0.88), t->layout_w, e);
-            t->anim_h = lerp_i((int)(t->layout_h * 0.88), t->layout_h, e);
-        }
-
-        double header_el = elapsed - HOME_HEADER_DELAY_MS;
-        if (header_el < 0.0)
-            home_header_x = -OPEN_SLIDE_X - 40;
-        else {
-            double he = header_el / HOME_HEADER_SLIDE_MS;
-            if (he > 1.0)
-                he = 1.0;
-            home_header_x = lerp_i(-OPEN_SLIDE_X, MARGIN, ease_out_cubic(he));
-        }
-        if (header_el < 0.0)
-            user_avatar_x = win_w + 40;
-        else {
-            double he = header_el / HOME_HEADER_SLIDE_MS;
-            if (he > 1.0)
-                he = 1.0;
-            user_avatar_x = lerp_i(win_w + 40, user_avatar_target_x(),
-                ease_out_cubic(he));
-        }
+        apply_menu_motion(elapsed);
         mark_dirty();
     } else if (layout_animating) {
         smooth_tiles(dt);
@@ -1280,7 +1339,7 @@ static void clear_home_region(Drawable dst, GC g) {
 }
 
 static void draw_home_section(Drawable dst, GC g) {
-    if (header_font && home_header_x > -OPEN_SLIDE_X - 80)
+    if (header_font && home_header_x < win_w)
         xft_draw(dst, header_font, home_header_x, MARGIN + header_font->ascent,
             "Home", 255, 255, 255);
     draw_user_header(dst, g);
@@ -1371,7 +1430,8 @@ static void rebuild_static_layer(void) {
         return;
     layout_content();
     draw_bg(static_pm, buf_gc);
-    draw_apps_section(static_pm, buf_gc);
+    if (apps_section_visible())
+        draw_apps_section(static_pm, buf_gc);
     static_valid = 1;
     static_scroll = scroll_y;
 }
@@ -1409,7 +1469,7 @@ static void draw_all(void) {
     else
         layout_content();
 
-    int fast = (open_anim < 1.0 || layout_animating || dragging) &&
+    int fast = (menu_closing || open_anim < 1.0 || layout_animating || dragging) &&
         static_valid && static_scroll == scroll_y;
 
     if (!fast || !static_valid || static_scroll != scroll_y)
@@ -1424,8 +1484,8 @@ static void draw_all(void) {
         XCopyArea(dpy, static_pm, buf_pm, buf_gc, 0, 0, win_w, win_h, 0, 0);
         draw_home_section(buf_pm, buf_gc);
         draw_context_menu(buf_pm, buf_gc);
-        if (!dragging && !layout_animating && open_anim >= 1.0) {
-            home_header_x = MARGIN;
+        if (!dragging && !layout_animating && !menu_closing && open_anim >= 1.0) {
+            home_header_x = HOME_HEADER_REST_X;
             user_avatar_x = user_avatar_target_x();
             for (int i = 0; i < n_home_tiles; i++) {
                 Tile *t = &home_tiles[i];
@@ -1457,6 +1517,8 @@ static int tile_index_at_content(int cx, int cy) {
 }
 
 static AppEntry *app_at_content(int cx, int cy) {
+    if (!apps_section_visible())
+        return NULL;
     int base_y = home_h;
     if (cy < base_y + HEADER_H)
         return NULL;
@@ -1479,6 +1541,8 @@ static AppEntry *app_at_content(int cx, int cy) {
 }
 
 static int app_index_at_content(int cx, int cy) {
+    if (!apps_section_visible())
+        return -1;
     int base_y = home_h;
     if (cy < base_y + HEADER_H)
         return -1;
@@ -1577,7 +1641,7 @@ static void handle_click(int x, int y) {
     }
 
     if (emblem_zone_click(x, y)) {
-        hide_menu();
+        begin_close_animation();
         return;
     }
     int cy = y + scroll_y;
@@ -1596,10 +1660,12 @@ static void handle_click(int x, int y) {
 
 static void handle_scroll(int dir) {
     layout_content();
+    int was_apps = apps_section_visible();
     int step = APP_ROW_H + APP_GAP;
     scroll_y += dir * step;
     layout_content();
-    invalidate_static();
+    if (was_apps != apps_section_visible())
+        invalidate_static();
     mark_dirty();
     draw_all();
 }
@@ -1737,6 +1803,7 @@ int main(void) {
 
     drag_tile_idx = -1;
     dragging = 0;
+    menu_closing = 0;
     open_anim = 1.0;
 
     br8_start_open = XInternAtom(dpy, "_BR8_START_OPEN", False);
@@ -1789,10 +1856,10 @@ int main(void) {
             tick_animations();
 
         int want = read_open();
-        if (want && !visible)
+        if (want && (!visible || menu_closing))
             show_menu();
-        else if (!want && visible)
-            hide_menu();
+        else if (!want && visible && !menu_closing)
+            begin_close_animation();
 
         while (XPending(dpy)) {
             XEvent ev;
@@ -1805,10 +1872,10 @@ int main(void) {
                      ev.xproperty.window == root &&
                      ev.xproperty.atom == br8_start_open) {
                 want = read_open();
-                if (want && !visible)
+                if (want && (!visible || menu_closing))
                     show_menu();
-                else if (!want && visible)
-                    hide_menu();
+                else if (!want && visible && !menu_closing)
+                    begin_close_animation();
             } else if (ev.type == ButtonPress && ev.xbutton.window == start_win && visible) {
                 if (ev.xbutton.button == Button4)
                     handle_scroll(-1);
@@ -1860,7 +1927,7 @@ int main(void) {
                         ctx_visible = 0;
                         draw_all();
                     } else {
-                        hide_menu();
+                        begin_close_animation();
                     }
                 }
             }
