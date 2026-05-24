@@ -11,7 +11,7 @@ Bootable hybrid live ISO for x86_64 PCs (BIOS + UEFI). Builds on [Milestone 1](h
 - **Plymouth** quiet boot splash (`backroot8` theme) plus framebuffer boot emblem through early boot
 - **Start menu** (`br8-start`): slide-in animation, user header, Desktop tile wallpaper preview, app grid on scroll
 - **Settings** metro app (`br8-settings`): wallpaper, display, keyboard, mouse, time zone
-- **Live USB installer** (`br8-install`) and **first-boot OOBE** (`br8-oobe`)
+- **Live USB installer** (`br8-install`) and **first-boot OOBE** (`br8-oobe`) with intro slides, transitions, and account setup
 - **Segoe UI** for title bars and taskbar clock
 - **Win7/8-style** close button (elongated X in red square at title bar top)
 - **PowerPDF** document viewer
