@@ -8,8 +8,8 @@ PASS_FILE="${2:-}"
 [[ -n "$USER_NAME" && -f "$PASS_FILE" ]] || exit 1
 [[ -f /etc/backroot8/oobe-pending ]] || exit 0
 
-# Let the loading screen show for a moment.
-sleep 4
+mkdir -p /run/br8-oobe
+chmod 0755 /run/br8-oobe
 
 if ! id "$USER_NAME" &>/dev/null; then
     useradd -m -G wheel,audio,video,storage -s /bin/bash "$USER_NAME"
@@ -22,12 +22,20 @@ else
     passwd -d "$USER_NAME" 2>/dev/null || true
 fi
 
-# Allow sudo for the primary user.
 mkdir -p /etc/sudoers.d
 echo "%wheel ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/br8-wheel
 chmod 440 /etc/sudoers.d/br8-wheel
 
 mkdir -p "/home/$USER_NAME/.config/backroot8"
+WP_IDX=0
+if [[ -f /run/br8-oobe/wallpaper ]]; then
+    WP_IDX="$(tr -dc '0-9' </run/br8-oobe/wallpaper)"
+fi
+WP_IDX=$((WP_IDX + 1))
+WP_SRC="/usr/share/backroot8/oobe-wallpapers/wallpaper-${WP_IDX}.jpg"
+if [[ -r "$WP_SRC" ]]; then
+    install -Dm644 "$WP_SRC" "/home/$USER_NAME/.config/backroot8/wallpaper.jpg"
+fi
 chown -R "$USER_NAME:$USER_NAME" "/home/$USER_NAME"
 
 mkdir -p /etc/backroot8
@@ -48,8 +56,11 @@ EOF
 chown "$USER_NAME:$USER_NAME" "/home/$USER_NAME/.xinitrc"
 chmod +x "/home/$USER_NAME/.xinitrc"
 
+loginctl enable-linger "$USER_NAME" 2>/dev/null || true
+runuser -u "$USER_NAME" -- fc-cache -f 2>/dev/null || true
+
+rm -f /run/br8-oobe/panel-ready
+touch /run/br8-oobe/keep-loading
+
 rm -f /etc/backroot8/oobe-pending
 touch /etc/backroot8/oobe-complete
-
-# Additional setup time for the loading screen.
-sleep 3

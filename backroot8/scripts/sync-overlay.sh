@@ -69,6 +69,15 @@ install -Dm644 "$ROOT/rootfs-overlay/usr/share/backroot8/install-banner.png" \
     "$DEST/usr/share/backroot8/install-banner.png"
 install -Dm644 "$ROOT/rootfs-overlay/usr/share/backroot8/default-user.png" \
     "$DEST/usr/share/backroot8/default-user.png"
+if [ -d "$ROOT/rootfs-overlay/usr/share/backroot8/oobe-wallpapers" ]; then
+    mkdir -p "$DEST/usr/share/backroot8/oobe-wallpapers"
+    for _wp in "$ROOT/rootfs-overlay/usr/share/backroot8/oobe-wallpapers/"*.jpg; do
+        [ -f "$_wp" ] || continue
+        install -Dm644 "$_wp" "$DEST/usr/share/backroot8/oobe-wallpapers/$(basename "$_wp")"
+    done
+fi
+install -Dm644 "$ROOT/rootfs-overlay/etc/tmpfiles.d/br8-oobe.conf" \
+    "$DEST/etc/tmpfiles.d/br8-oobe.conf"
 install -Dm755 "$ROOT/rootfs-overlay/usr/share/backroot8/show-splash.sh" \
     "$DEST/usr/share/backroot8/show-splash.sh"
 install -Dm755 "$ROOT/rootfs-overlay/usr/share/backroot8/br8-panel-launcher.sh" \
