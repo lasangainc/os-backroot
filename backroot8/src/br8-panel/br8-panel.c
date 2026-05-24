@@ -1017,7 +1017,8 @@ int main(void) {
         draw_panel();
     }
     {
-        mkdir("/run/br8-oobe", 0755);
+        mkdir("/run/br8-oobe", 1777);
+        chmod("/run/br8-oobe", 01777);
         FILE *rf = fopen("/run/br8-oobe/panel-ready", "w");
         if (rf) {
             fputc('1', rf);
