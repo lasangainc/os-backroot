@@ -113,6 +113,10 @@ CHROOT
 log "Installing Backroot overlay and binaries..."
 "$ROOT/scripts/sync-overlay.sh" "$ROOTFS"
 
+# sshd requires root-owned privilege separation directory (avoid broken chown from host user).
+chown root:root "$ROOTFS/usr/share/empty.sshd"
+chmod 755 "$ROOTFS/usr/share/empty.sshd"
+
 log "Installing Segoe UI font..."
 SEGOE_TMP="$(mktemp -d)"
 curl -fsSL -o "$SEGOE_TMP/segoe-ui-variable.zip" "https://aka.ms/SegoeUIVariable"
