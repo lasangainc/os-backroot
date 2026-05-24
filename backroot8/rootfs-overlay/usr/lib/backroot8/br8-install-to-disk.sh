@@ -6,7 +6,9 @@ set -euo pipefail
 DISK="${1:-}"
 STATUS_DIR="/run/br8-install"
 STATUS_FILE="$STATUS_DIR/status"
-TARGET="/mnt/br8-target"
+# Use tmpfs under /run, not /mnt — overlay upper entries under /mnt can
+# shadow real mounts on the live squashfs root and break EFI mounting.
+TARGET="$STATUS_DIR/target"
 ESP_MOUNT="$TARGET/boot/efi"
 LOG="/run/br8-install/install.log"
 ESP_SIZE_MIB=512
@@ -83,10 +85,24 @@ install_boot_images() {
     echo "[br8-install] boot images installed: $(ls -lh "$vmlinuz" "$initrd" 2>/dev/null || ls -lh "$vmlinuz")"
 }
 
+prepare_target_chroot_dirs() {
+    # rsync skips live tmpfs trees; arch-chroot mounts tmpfs on $TARGET/tmp.
+    mkdir -p "$TARGET"/{tmp,var/tmp,dev/pts,proc,sys,run}
+    chmod 1777 "$TARGET/tmp" "$TARGET/var/tmp"
+}
+
 unmount_target_binds() {
     local _d
-    for _d in run sys proc dev; do
+    for _d in tmp run sys proc dev; do
         umount -l "$TARGET/$_d" 2>/dev/null || umount "$TARGET/$_d" 2>/dev/null || true
+    done
+}
+
+cleanup_target_mounts() {
+    local mp
+    unmount_target_binds
+    for mp in "$ESP_MOUNT" "$TARGET" /mnt/br8-target/boot/efi /mnt/br8-target; do
+        mountpoint -q "$mp" 2>/dev/null && umount "$mp" 2>/dev/null || true
     done
 }
 
@@ -94,6 +110,9 @@ unmount_target_binds() {
 grep -q 'backroot8iso' /proc/cmdline || fail "not a live session"
 
 exec > >(tee -a "$LOG") 2>&1
+
+cleanup_target_mounts
+mkdir -p "$STATUS_DIR"
 
 status 5 "Partitioning disk…"
 wipefs -af "$DISK"
@@ -124,9 +143,10 @@ echo "[br8-install] format complete"
 
 status 25 "Mounting target…"
 mkdir -p "$TARGET"
-mount "$ROOT_PART" "$TARGET" || fail "mount root failed"
+mount -t ext4 "$ROOT_PART" "$TARGET" || fail "mount root failed"
 mkdir -p "$ESP_MOUNT"
-mount "$ESP_PART" "$ESP_MOUNT" || fail "mount EFI failed"
+modprobe vfat 2>/dev/null || true
+mount -t vfat "$ESP_PART" "$ESP_MOUNT" || fail "mount EFI failed"
 
 status 35 "Copying system files…"
 rsync -aAXH \
@@ -170,14 +190,16 @@ GRUB_CMDLINE_LINUX=""
 GRUB_DISABLE_OS_PROBER=true
 EOF
 
-for _d in dev proc sys run; do
-    mount --bind "/$_d" "$TARGET/$_d"
-done
+prepare_target_chroot_dirs
 
 chroot_cmd() {
     if command -v arch-chroot >/dev/null; then
         arch-chroot "$TARGET" "$@"
     else
+        for _d in dev proc sys run; do
+            mount --bind "/$_d" "$TARGET/$_d"
+        done
+        mount -t tmpfs tmpfs "$TARGET/tmp" || true
         chroot "$TARGET" "$@"
     fi
 }
@@ -186,8 +208,9 @@ status 70 "Installing boot loaders…"
 chroot_cmd /bin/bash -eux <<CHROOT
 set -e
 mkinitcpio -P
-grub-install --target=i386-pc --force-extra-removable "$DISK"
-grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=Backroot8 --recheck
+grub-install --target=i386-pc "$DISK"
+grub-install --target=x86_64-efi --efi-directory=/boot/efi \
+    --bootloader-id=Backroot8 --recheck --removable
 grub-mkconfig -o /boot/grub/grub.cfg
 CHROOT
 
