@@ -101,8 +101,8 @@ chmod 755 /usr/share/empty.sshd
 systemctl enable NetworkManager
 systemctl enable sshd
 
-# tty1 is owned by backroot8-desktop (startx); avoid getty fighting Plymouth/X.
-systemctl mask getty@tty1.service
+# tty1 is owned by backroot8-desktop (startx); desktop unit Conflicts=getty@tty1.
+systemctl disable getty@tty1.service
 
 sed -i 's/^HOOKS=.*/HOOKS=(base udev modconf kms block plymouth backroot8_iso backroot8_root filesystems fsck)/' /etc/mkinitcpio.conf
 grep -q '^MODULES=.*overlay' /etc/mkinitcpio.conf || \
