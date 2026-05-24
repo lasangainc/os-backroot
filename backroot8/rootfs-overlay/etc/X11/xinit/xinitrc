@@ -4,12 +4,23 @@ export DESKTOP_SESSION=backroot8
 export DISPLAY=:0
 xrdb -merge /etc/X11/Xresources 2>/dev/null || true
 
+OOBE_LOADING=0
+if [ -f /run/br8-oobe/keep-loading ]; then
+    OOBE_LOADING=1
+    /usr/local/bin/br8-oobe --loading &
+fi
+
 SPLASH=/usr/share/backroot8/bootscreen.png
 WALLPAPER=/usr/share/backgrounds/backroot8.jpg
+if [ -r "$HOME/.config/backroot8/wallpaper.jpg" ]; then
+    WALLPAPER="$HOME/.config/backroot8/wallpaper.jpg"
+fi
 
-# Loading splash on black until panel and wallpaper are up
-xsetroot -solid black
-if command -v feh >/dev/null && [ -r "$SPLASH" ]; then
+if [ "$OOBE_LOADING" = 0 ]; then
+    xsetroot -solid black
+fi
+
+if [ "$OOBE_LOADING" = 0 ] && command -v feh >/dev/null && [ -r "$SPLASH" ]; then
     feh --fullscreen --scale-down --auto-zoom --image-bg black --borderless "$SPLASH" &
     SPLASH_PID=$!
 fi
@@ -17,10 +28,10 @@ fi
 if command -v feh >/dev/null && [ -r "$WALLPAPER" ]; then
     feh --bg-fill "$WALLPAPER" &
 else
-    xsetroot -solid "#1e2030"
+    [ "$OOBE_LOADING" = 0 ] && xsetroot -solid "#1e2030"
 fi
 
-# Panel (launcher captures crashes for WM error UI)
+# Panel before WM so the taskbar maps before br8-wm manages clients
 /usr/share/backroot8/br8-panel-launcher.sh &
 PANEL_PID=$!
 
@@ -39,7 +50,8 @@ fi
 
 # Default terminal (skip during live install wizard or OOBE)
 if ! /usr/lib/backroot8/is-live-boot.sh && [ ! -f /etc/backroot8/oobe-pending ]; then
-    xterm -fa Monospace -fs 11 -bg "#1a1a22" -fg "#e8e8ec" -title root@Backroot8 -e /bin/bash -l &
+    xterm -fa Monospace -fs 11 -bg "#1a1a22" -fg "#e8e8ec" \
+        -title "${USER:-root}@Backroot8" -e /bin/bash -l &
 fi
 
 if [ -n "${SPLASH_PID:-}" ]; then
@@ -47,8 +59,15 @@ if [ -n "${SPLASH_PID:-}" ]; then
     kill "$SPLASH_PID" 2>/dev/null || true
 fi
 
-# Window manager (exec keeps the X session alive)
-# Export X desktop over VNC for noVNC (QEMU std VGA shows the text console)
+# Brief pause so panel maps before WM adopts existing windows (OOBE handoff)
+if [ "$OOBE_LOADING" = 1 ]; then
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+        [ -f /run/br8-oobe/panel-ready ] && break
+        sleep 0.2
+    done
+fi
+
+# Window manager (exec keeps the X session alive; OOBE loading overlay stays above until panel is up)
 if command -v x11vnc >/dev/null; then
     x11vnc -display :0 -forever -nopw -listen 127.0.0.1 -rfbport 5900 -shared -bg -o /tmp/x11vnc.log
 fi
