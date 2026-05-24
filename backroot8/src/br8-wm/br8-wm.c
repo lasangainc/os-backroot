@@ -311,7 +311,7 @@ static void draw_close_button(Client *c) {
     XSetForeground(dpy, gc_close_x, rgb(255, 255, 255));
     int cx = CLOSE_W / 2;
     int cy = CAP_RISE + TITLE_H / 2;
-    int dx = 6;
+    int dx = 5;
     int dy = 5;
     XDrawLine(dpy, c->btn_close, gc_close_x, cx - dx, cy - dy, cx + dx, cy + dy);
     XDrawLine(dpy, c->btn_close, gc_close_x, cx - dx, cy + dy, cx + dx, cy - dy);
