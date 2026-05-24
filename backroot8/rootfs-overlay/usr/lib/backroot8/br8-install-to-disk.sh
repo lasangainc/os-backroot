@@ -85,9 +85,15 @@ install_boot_images() {
     echo "[br8-install] boot images installed: $(ls -lh "$vmlinuz" "$initrd" 2>/dev/null || ls -lh "$vmlinuz")"
 }
 
+prepare_target_chroot_dirs() {
+    # rsync skips live tmpfs trees; arch-chroot mounts tmpfs on $TARGET/tmp.
+    mkdir -p "$TARGET"/{tmp,var/tmp,dev/pts,proc,sys,run}
+    chmod 1777 "$TARGET/tmp" "$TARGET/var/tmp"
+}
+
 unmount_target_binds() {
     local _d
-    for _d in run sys proc dev; do
+    for _d in tmp run sys proc dev; do
         umount -l "$TARGET/$_d" 2>/dev/null || umount "$TARGET/$_d" 2>/dev/null || true
     done
 }
@@ -184,14 +190,16 @@ GRUB_CMDLINE_LINUX=""
 GRUB_DISABLE_OS_PROBER=true
 EOF
 
-for _d in dev proc sys run; do
-    mount --bind "/$_d" "$TARGET/$_d"
-done
+prepare_target_chroot_dirs
 
 chroot_cmd() {
     if command -v arch-chroot >/dev/null; then
         arch-chroot "$TARGET" "$@"
     else
+        for _d in dev proc sys run; do
+            mount --bind "/$_d" "$TARGET/$_d"
+        done
+        mount -t tmpfs tmpfs "$TARGET/tmp" || true
         chroot "$TARGET" "$@"
     fi
 }
