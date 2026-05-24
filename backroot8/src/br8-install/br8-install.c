@@ -24,9 +24,11 @@
 #define DISK_LIST_SCRIPT "/usr/lib/backroot8/br8-list-install-disks.sh"
 #define WIN_H 640
 #define PAD 28
-#define BANNER_H 220
+#define BANNER_MAX_H 300
 #define BTN_H 44
 #define BTN_W 160
+#define INSTALL_ROW_H 28
+#define CHECK_UTF8 "\xe2\x9c\x93"
 #define ROW_H 44
 #define MAX_DISKS 24
 #define TOS_LINES 8
@@ -109,6 +111,26 @@ static Drawable canvas;
 static int banner_w, banner_h;
 static int banner_ready;
 static time_t shutdown_at;
+
+typedef struct {
+    const char *label;
+    int end_pct;
+} InstallStage;
+
+static const InstallStage install_stages[] = {
+    { "Partitioning disk", 9 },
+    { "Formatting EFI partition", 15 },
+    { "Formatting root partition", 23 },
+    { "Mounting target", 29 },
+    { "Copying system files", 39 },
+    { "Installing kernel and boot files", 49 },
+    { "Configuring system for disk boot", 64 },
+    { "Installing boot loaders", 81 },
+    { "Finishing first-run setup", 91 },
+    { "Syncing disks", 99 },
+};
+
+#define N_INSTALL_STAGES ((int)(sizeof install_stages / sizeof install_stages[0]))
 
 static const char *tos_placeholder =
     "Backroot 8 — Terms of Service (placeholder)\n\n"
@@ -282,11 +304,30 @@ static void load_disks(void) {
     }
 }
 
+static int stage_start_pct(int idx) {
+    if (idx <= 0)
+        return 0;
+    return install_stages[idx - 1].end_pct + 1;
+}
+
+static int stage_progress(int idx, int overall_pct) {
+    int lo = stage_start_pct(idx);
+    int hi = install_stages[idx].end_pct;
+
+    if (overall_pct >= hi)
+        return 100;
+    if (overall_pct < lo)
+        return 0;
+    if (hi <= lo)
+        return 100;
+    return (overall_pct - lo) * 100 / (hi - lo);
+}
+
 static void load_banner(void) {
     int iw, ih, comp;
     unsigned char *img;
     int max_w = WIN_W - PAD * 2;
-    int max_h = BANNER_H;
+    int max_h = BANNER_MAX_H;
 
     if (banner_ready)
         return;
@@ -334,8 +375,17 @@ static void load_banner(void) {
             if (sx >= iw)
                 sx = iw - 1;
             int i = (sy * iw + sx) * 4;
-            unsigned long pixel = ((unsigned long)img[i] << 16) |
-                ((unsigned long)img[i + 1] << 8) | (unsigned long)img[i + 2];
+            unsigned char a = img[i + 3];
+            unsigned char r = img[i];
+            unsigned char g = img[i + 1];
+            unsigned char b = img[i + 2];
+            if (a < 255) {
+                r = (unsigned char)((r * a + COL_BG_R * (255 - a)) / 255);
+                g = (unsigned char)((g * a + COL_BG_G * (255 - a)) / 255);
+                b = (unsigned char)((b * a + COL_BG_B * (255 - a)) / 255);
+            }
+            unsigned long pixel = ((unsigned long)r << 16) |
+                ((unsigned long)g << 8) | (unsigned long)b;
             XPutPixel(xi, x, y, pixel);
         }
     }
@@ -411,39 +461,38 @@ static void present_log_frame(void) {
 }
 
 static void draw_banner(int y0) {
-    int x0 = PAD;
-    int w = WIN_W - PAD * 2;
-
     load_banner();
     if (banner_ready && banner_pm) {
-        int dx = x0 + (w - banner_w) / 2;
-        int dy = y0 + (BANNER_H - banner_h) / 2;
-        XSetForeground(dpy, gc, rgb(30, 50, 80));
-        XFillRectangle(dpy, canvas, gc, x0, y0, w, BANNER_H);
-        XCopyArea(dpy, banner_pm, canvas, gc, 0, 0, banner_w, banner_h, dx, dy);
+        int dx = (WIN_W - banner_w) / 2;
+        XCopyArea(dpy, banner_pm, canvas, gc, 0, 0, banner_w, banner_h, dx, y0);
         return;
     }
 
-    XSetForeground(dpy, gc, rgb(40, 70, 110));
-    XFillRectangle(dpy, canvas, gc, x0, y0, w, BANNER_H);
     const char *ph = "Backroot 8";
     int tw = text_width(font_head, ph);
-    xft_draw(canvas, x0 + (w - tw) / 2, y0 + BANNER_H / 2,
+    xft_draw(canvas, (WIN_W - tw) / 2, y0 + 40,
         ph, COL_MUTED_R, COL_MUTED_G, COL_MUTED_B, font_head);
 }
 
-static void draw_welcome(void) {
-    draw_banner(PAD);
-    int y = PAD + BANNER_H + 36;
-    xft_draw(canvas, PAD, y, "Install Backroot 8", COL_TEXT_R, COL_TEXT_G, COL_TEXT_B, font_title);
-    y += font_title ? font_title->height + 16 : 48;
-    xft_draw(canvas, PAD, y,
-        "Set up Backroot on your PC from this live USB session.",
-        COL_MUTED_R, COL_MUTED_G, COL_MUTED_B, font_body);
+static void welcome_layout(int *logo_y, int *btn_x, int *btn_y) {
+    load_banner();
+    int logo_h = banner_ready ? banner_h : 80;
+    int group_h = logo_h + 24 + BTN_H;
+    int top = (WIN_H - group_h) / 2;
 
-    int bx = WIN_W - PAD - BTN_W;
-    int by = WIN_H - PAD - BTN_H;
-    draw_metro_btn(bx, by, BTN_W, BTN_H, "Start", start_hover, 1);
+    if (top < PAD)
+        top = PAD;
+    *logo_y = top;
+    *btn_x = (WIN_W - BTN_W) / 2;
+    *btn_y = top + logo_h + 24;
+}
+
+static void draw_welcome(void) {
+    int logo_y, btn_x, btn_y;
+
+    welcome_layout(&logo_y, &btn_x, &btn_y);
+    draw_banner(logo_y);
+    draw_metro_btn(btn_x, btn_y, BTN_W, BTN_H, "Install", start_hover, 1);
 }
 
 static void draw_tos_box(int x0, int y0, int w, int h) {
@@ -682,6 +731,49 @@ static int read_install_status(int *pct, char *msg, size_t msgsz) {
     return 1;
 }
 
+static void draw_install_steps(int y0, int overall_pct) {
+    int x = PAD;
+    int w = WIN_W - PAD * 2;
+    char pctbuf[16];
+
+    if (overall_pct < 0)
+        overall_pct = 0;
+    if (overall_pct > 100)
+        overall_pct = 100;
+
+    for (int i = 0; i < N_INSTALL_STAGES; i++) {
+        int y = y0 + i * INSTALL_ROW_H;
+        int lo = stage_start_pct(i);
+        int hi = install_stages[i].end_pct;
+        int done = overall_pct >= hi;
+        int active = overall_pct >= lo && overall_pct < hi;
+        int spct = stage_progress(i, overall_pct);
+        int label_x = x + 26;
+        int baseline = y + text_baseline(INSTALL_ROW_H, font_body);
+
+        if (done) {
+            xft_draw(canvas, x, baseline, CHECK_UTF8,
+                COL_ACCENT_R, COL_ACCENT_G, COL_ACCENT_B, font_body);
+            xft_draw(canvas, label_x, baseline, install_stages[i].label,
+                COL_TEXT_R, COL_TEXT_G, COL_TEXT_B, font_body);
+        } else if (active) {
+            xft_draw(canvas, label_x, baseline, install_stages[i].label,
+                COL_TEXT_R, COL_TEXT_G, COL_TEXT_B, font_body);
+            snprintf(pctbuf, sizeof pctbuf, "%d%%", spct);
+            int pw = text_width(font_body, pctbuf);
+            xft_draw(canvas, x + w - pw, baseline, pctbuf,
+                COL_ACCENT_R, COL_ACCENT_G, COL_ACCENT_B, font_body);
+        } else {
+            xft_draw(canvas, label_x, baseline, install_stages[i].label,
+                COL_MUTED_R, COL_MUTED_G, COL_MUTED_B, font_body);
+            snprintf(pctbuf, sizeof pctbuf, "0%%");
+            int pw = text_width(font_body, pctbuf);
+            xft_draw(canvas, x + w - pw, baseline, pctbuf,
+                COL_MUTED_R, COL_MUTED_G, COL_MUTED_B, font_body);
+        }
+    }
+}
+
 static void draw_installing(void) {
     int pct = 0;
     char msg[256];
@@ -690,24 +782,7 @@ static void draw_installing(void) {
     xft_draw(canvas, PAD, PAD + 30, "Installing Backroot 8…",
         COL_TEXT_R, COL_TEXT_G, COL_TEXT_B, font_title);
 
-    int bar_x = PAD;
-    int bar_y = WIN_H / 2 - 20;
-    int bar_w = WIN_W - PAD * 2;
-    int bar_h = 28;
-    XSetForeground(dpy, gc, rgb(20, 60, 100));
-    XFillRectangle(dpy, canvas, gc, bar_x, bar_y, bar_w, bar_h);
-    if (pct < 0)
-        pct = 0;
-    if (pct > 100)
-        pct = 100;
-    XSetForeground(dpy, gc, rgb(255, 255, 255));
-    XFillRectangle(dpy, canvas, gc, bar_x + 2, bar_y + 2,
-        (bar_w - 4) * pct / 100, bar_h - 4);
-
-    if (!msg[0])
-        snprintf(msg, sizeof msg, "Preparing installation…");
-    xft_draw(canvas, PAD, bar_y + bar_h + 24, msg,
-        COL_MUTED_R, COL_MUTED_G, COL_MUTED_B, font_body);
+    draw_install_steps(PAD + 56, pct);
 
     {
         int obx, oby;
@@ -720,6 +795,7 @@ static void draw_installing(void) {
         shutdown_at = time(NULL) + 10;
     } else if (st < 0)
         step = STEP_FAILED;
+    (void)msg;
 }
 
 static void do_shutdown(void) {
@@ -806,9 +882,9 @@ static int point_in_rect(int x, int y, int rx, int ry, int rw, int rh) {
     return x >= rx && x < rx + rw && y >= ry && y < ry + rh;
 }
 
-static int welcome_start_btn(int *bx, int *by) {
-    *bx = WIN_W - PAD - BTN_W;
-    *by = WIN_H - PAD - BTN_H;
+static int welcome_install_btn(int *bx, int *by) {
+    int logo_y;
+    welcome_layout(&logo_y, bx, by);
     return 1;
 }
 
@@ -889,7 +965,7 @@ static void handle_click(int x, int y) {
     }
     if (step == STEP_WELCOME) {
         int bx, by;
-        welcome_start_btn(&bx, &by);
+        welcome_install_btn(&bx, &by);
         if (point_in_rect(x, y, bx, by, BTN_W, BTN_H))
             step = STEP_SETUP;
     } else if (step == STEP_SETUP) {
@@ -915,7 +991,7 @@ static void update_hover(int x, int y) {
     int ns = 0, ni = 0, nb = 0, lo = 0;
     if (step == STEP_WELCOME) {
         int bx, by;
-        welcome_start_btn(&bx, &by);
+        welcome_install_btn(&bx, &by);
         ns = point_in_rect(x, y, bx, by, BTN_W, BTN_H);
     } else if (step == STEP_SETUP) {
         nb = point_in_rect(x, y, PAD, WIN_H - PAD - BTN_H, BTN_W, BTN_H);
