@@ -1129,8 +1129,9 @@ int main(void) {
     for (int i = 0; i < WALLPAPER_N; i++)
         load_thumb(i);
 
-    XMapRaised(dpy, win);
     draw_all();
+    XFlush(dpy);
+    XMapRaised(dpy, win);
 
     int running = 1;
     while (running) {
