@@ -45,7 +45,9 @@
 #define CRASH_FILE "/tmp/br8-panel.crash"
 #define CRASH_RESTART "/tmp/br8-panel.restart"
 #define BTN_W 30
-#define CLOSE_W 34
+#define BTN_H 22
+#define CLOSE_W 52
+#define CAP_RISE 6
 #define RESIZE_SZ 14
 #define MIN_FRAME_W 200
 #define MIN_FRAME_H 120
@@ -267,16 +269,20 @@ static void fetch_client_title(Client *c) {
     strncpy(c->name, "Window", MAX_TITLE);
 }
 
+static int close_cap_height(void) {
+    return TITLE_H + CAP_RISE;
+}
+
 static void draw_chrome_btn_bg(Window w) {
     XSetForeground(dpy, gc_title, rgb(43, 43, 43));
-    XFillRectangle(dpy, w, gc_title, 0, 0, BTN_W, TITLE_H);
+    XFillRectangle(dpy, w, gc_title, 0, 0, BTN_W, BTN_H);
 }
 
 static void draw_min_button(Client *c) {
     draw_chrome_btn_bg(c->btn_min);
     XSetForeground(dpy, gc_btn, rgb(255, 255, 255));
     int cx = BTN_W / 2;
-    int cy = TITLE_H / 2;
+    int cy = BTN_H / 2;
     XDrawLine(dpy, c->btn_min, gc_btn, cx - 5, cy, cx + 5, cy);
     XDrawLine(dpy, c->btn_min, gc_btn, cx - 5, cy + 1, cx + 5, cy + 1);
 }
@@ -285,7 +291,7 @@ static void draw_max_button(Client *c) {
     draw_chrome_btn_bg(c->btn_max);
     XSetForeground(dpy, gc_btn, rgb(255, 255, 255));
     int cx = BTN_W / 2;
-    int cy = TITLE_H / 2;
+    int cy = BTN_H / 2;
     if (c->maximized) {
         int s = 4;
         XDrawRectangle(dpy, c->btn_max, gc_btn, cx - s, cy - s + 2, s, s);
@@ -297,11 +303,14 @@ static void draw_max_button(Client *c) {
 }
 
 static void draw_close_button(Client *c) {
+    int cap_h = close_cap_height();
+
+    /* Win7/8: wide red cap on top-right; min/max sit lower in the title bar */
     XSetForeground(dpy, gc_close_fill, rgb(196, 43, 28));
-    XFillRectangle(dpy, c->btn_close, gc_close_fill, 0, 0, CLOSE_W, TITLE_H);
+    XFillRectangle(dpy, c->btn_close, gc_close_fill, 0, 0, CLOSE_W, cap_h);
     XSetForeground(dpy, gc_close_x, rgb(255, 255, 255));
     int cx = CLOSE_W / 2;
-    int cy = TITLE_H / 2;
+    int cy = CAP_RISE + TITLE_H / 2;
     int dx = 5;
     int dy = 5;
     XDrawLine(dpy, c->btn_close, gc_close_x, cx - dx, cy - dy, cx + dx, cy + dy);
@@ -1089,13 +1098,19 @@ static void layout_client(Client *c) {
     if (grip_y < TITLE_H)
         grip_y = TITLE_H;
 
+    int btn_y = (TITLE_H - BTN_H) / 2;
+    int cap_h = close_cap_height();
+
     XMoveResizeWindow(dpy, c->title, 0, 0, c->w, TITLE_H);
     XMoveResizeWindow(dpy, c->client, 0, TITLE_H, c->w, c->h - TITLE_H);
-    XMoveResizeWindow(dpy, c->btn_min, tx, 0, BTN_W, TITLE_H);
+    XMoveResizeWindow(dpy, c->btn_min, tx, btn_y, BTN_W, BTN_H);
     tx += BTN_W;
-    XMoveResizeWindow(dpy, c->btn_max, tx, 0, BTN_W, TITLE_H);
+    XMoveResizeWindow(dpy, c->btn_max, tx, btn_y, BTN_W, BTN_H);
     tx += BTN_W;
-    XMoveResizeWindow(dpy, c->btn_close, tx, 0, CLOSE_W, TITLE_H);
+    XMoveResizeWindow(dpy, c->btn_close, tx, -CAP_RISE, CLOSE_W, cap_h);
+    XRaiseWindow(dpy, c->btn_min);
+    XRaiseWindow(dpy, c->btn_max);
+    XRaiseWindow(dpy, c->btn_close);
     XMoveResizeWindow(dpy, c->resize_grip, grip_x, grip_y, RESIZE_SZ, RESIZE_SZ);
     XRaiseWindow(dpy, c->resize_grip);
     draw_chrome(c);
@@ -1242,9 +1257,9 @@ static void add_client(Window w) {
     c->frame = XCreateSimpleWindow(dpy, root, c->x, c->y, c->w, c->h, 2,
         rgb(70, 75, 90), rgb(28, 30, 38));
     c->title = XCreateSimpleWindow(dpy, c->frame, 0, 0, c->w, TITLE_H, 0, 0, 0);
-    c->btn_min = XCreateSimpleWindow(dpy, c->frame, 0, 0, BTN_W, TITLE_H, 0, 0, 0);
-    c->btn_max = XCreateSimpleWindow(dpy, c->frame, 0, 0, BTN_W, TITLE_H, 0, 0, 0);
-    c->btn_close = XCreateSimpleWindow(dpy, c->frame, 0, 0, CLOSE_W, TITLE_H, 0, 0, 0);
+    c->btn_min = XCreateSimpleWindow(dpy, c->frame, 0, 0, BTN_W, BTN_H, 0, 0, 0);
+    c->btn_max = XCreateSimpleWindow(dpy, c->frame, 0, 0, BTN_W, BTN_H, 0, 0, 0);
+    c->btn_close = XCreateSimpleWindow(dpy, c->frame, 0, 0, CLOSE_W, close_cap_height(), 0, 0, 0);
     c->resize_grip = XCreateSimpleWindow(dpy, c->frame, 0, 0, RESIZE_SZ, RESIZE_SZ, 0, 0, 0);
 
     XSelectInput(dpy, c->frame, SubstructureRedirectMask | SubstructureNotifyMask);
