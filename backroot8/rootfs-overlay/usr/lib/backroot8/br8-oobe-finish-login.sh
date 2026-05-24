@@ -9,6 +9,6 @@ mkdir -p /run/br8-oobe
 chmod 1777 /run/br8-oobe
 touch /run/br8-oobe/keep-loading
 
-# Restart outside this service cgroup (avoid stop killing the restart helper).
+# Stop/start outside this service cgroup (restart from inside the unit is unreliable).
 systemd-run --no-block --collect \
-    /usr/bin/systemctl restart backroot8-desktop.service
+    /bin/bash -c 'sleep 0.5; systemctl stop backroot8-desktop.service; sleep 1; systemctl start backroot8-desktop.service'

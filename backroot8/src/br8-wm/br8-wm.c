@@ -681,8 +681,15 @@ static int load_crash_file(void) {
     return 1;
 }
 
+static void panel_restart_request(void);
+
 static void poll_panel_crash(void) {
     if (load_crash_file()) {
+        /* OOBE starts panel before WM; unblock launcher if panel crashed early. */
+        if (access("/run/br8-oobe/keep-loading", F_OK) == 0) {
+            panel_restart_request();
+            return;
+        }
         if (!crash_visible)
             show_crash_ui();
         else
