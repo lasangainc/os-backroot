@@ -103,6 +103,9 @@ static int start_hover, install_hover, back_hover;
 static int install_pid;
 static int win_x, win_y;
 static Pixmap banner_pm;
+static Pixmap back_pm;
+static Pixmap log_back_pm;
+static Drawable canvas;
 static int banner_w, banner_h;
 static int banner_ready;
 static time_t shutdown_at;
@@ -382,7 +385,29 @@ static void draw_metro_btn_d(Drawable draw, GC g, int x, int y, int w, int h,
 }
 
 static void draw_metro_btn(int x, int y, int w, int h, const char *label, int hover, int inverse) {
-    draw_metro_btn_d(win, gc, x, y, w, h, label, hover, inverse);
+    draw_metro_btn_d(canvas, gc, x, y, w, h, label, hover, inverse);
+}
+
+static void ensure_back_buffer(void) {
+    if (back_pm)
+        return;
+    back_pm = XCreatePixmap(dpy, win, WIN_W, WIN_H, DefaultDepth(dpy, screen));
+}
+
+static void present_frame(void) {
+    if (back_pm)
+        XCopyArea(dpy, back_pm, win, gc, 0, 0, WIN_W, WIN_H, 0, 0);
+}
+
+static void ensure_log_back_buffer(void) {
+    if (log_back_pm || !log_win)
+        return;
+    log_back_pm = XCreatePixmap(dpy, log_win, LOG_WIN_W, LOG_WIN_H, DefaultDepth(dpy, screen));
+}
+
+static void present_log_frame(void) {
+    if (log_back_pm && log_win)
+        XCopyArea(dpy, log_back_pm, log_win, log_gc, 0, 0, LOG_WIN_W, LOG_WIN_H, 0, 0);
 }
 
 static void draw_banner(int y0) {
@@ -394,25 +419,25 @@ static void draw_banner(int y0) {
         int dx = x0 + (w - banner_w) / 2;
         int dy = y0 + (BANNER_H - banner_h) / 2;
         XSetForeground(dpy, gc, rgb(30, 50, 80));
-        XFillRectangle(dpy, win, gc, x0, y0, w, BANNER_H);
-        XCopyArea(dpy, banner_pm, win, gc, 0, 0, banner_w, banner_h, dx, dy);
+        XFillRectangle(dpy, canvas, gc, x0, y0, w, BANNER_H);
+        XCopyArea(dpy, banner_pm, canvas, gc, 0, 0, banner_w, banner_h, dx, dy);
         return;
     }
 
     XSetForeground(dpy, gc, rgb(40, 70, 110));
-    XFillRectangle(dpy, win, gc, x0, y0, w, BANNER_H);
+    XFillRectangle(dpy, canvas, gc, x0, y0, w, BANNER_H);
     const char *ph = "Backroot 8";
     int tw = text_width(font_head, ph);
-    xft_draw(win, x0 + (w - tw) / 2, y0 + BANNER_H / 2,
+    xft_draw(canvas, x0 + (w - tw) / 2, y0 + BANNER_H / 2,
         ph, COL_MUTED_R, COL_MUTED_G, COL_MUTED_B, font_head);
 }
 
 static void draw_welcome(void) {
     draw_banner(PAD);
     int y = PAD + BANNER_H + 36;
-    xft_draw(win, PAD, y, "Install Backroot 8", COL_TEXT_R, COL_TEXT_G, COL_TEXT_B, font_title);
+    xft_draw(canvas, PAD, y, "Install Backroot 8", COL_TEXT_R, COL_TEXT_G, COL_TEXT_B, font_title);
     y += font_title ? font_title->height + 16 : 48;
-    xft_draw(win, PAD, y,
+    xft_draw(canvas, PAD, y,
         "Set up Backroot on your PC from this live USB session.",
         COL_MUTED_R, COL_MUTED_G, COL_MUTED_B, font_body);
 
@@ -423,9 +448,9 @@ static void draw_welcome(void) {
 
 static void draw_tos_box(int x0, int y0, int w, int h) {
     XSetForeground(dpy, gc, rgb(20, 60, 100));
-    XFillRectangle(dpy, win, gc, x0, y0, w, h);
+    XFillRectangle(dpy, canvas, gc, x0, y0, w, h);
     XSetForeground(dpy, gc, rgb(255, 255, 255));
-    XDrawRectangle(dpy, win, gc, x0, y0, w - 1, h - 1);
+    XDrawRectangle(dpy, canvas, gc, x0, y0, w - 1, h - 1);
 
     char buf[512];
     strncpy(buf, tos_placeholder, sizeof buf - 1);
@@ -437,7 +462,7 @@ static void draw_tos_box(int x0, int y0, int w, int h) {
         if (nl)
             *nl = '\0';
         if (line_y >= y0 + 8)
-            xft_draw(win, x0 + 12, line_y, p, COL_TEXT_R, COL_TEXT_G, COL_TEXT_B, font_body);
+            xft_draw(canvas, x0 + 12, line_y, p, COL_TEXT_R, COL_TEXT_G, COL_TEXT_B, font_body);
         line_y += font_body ? font_body->height + 6 : 18;
         if (!nl)
             break;
@@ -448,19 +473,19 @@ static void draw_tos_box(int x0, int y0, int w, int h) {
 
 static void draw_setup(void) {
     int y = PAD;
-    xft_draw(win, PAD, y + 20, "Install Backroot 8", COL_TEXT_R, COL_TEXT_G, COL_TEXT_B, font_head);
+    xft_draw(canvas, PAD, y + 20, "Install Backroot 8", COL_TEXT_R, COL_TEXT_G, COL_TEXT_B, font_head);
     y += 44;
 
     int tos_h = 140;
     draw_tos_box(PAD, y, WIN_W - PAD * 2, tos_h);
     y += tos_h + 12;
 
-    xft_draw(win, PAD, y,
+    xft_draw(canvas, PAD, y,
         "Warning: the selected drive will be completely nuked and Backroot will be installed on it.",
         COL_WARN_R, COL_WARN_G, COL_WARN_B, font_body);
     y += font_body ? font_body->height + 16 : 28;
 
-    xft_draw(win, PAD, y, "Choose a drive:", COL_TEXT_R, COL_TEXT_G, COL_TEXT_B, font_body);
+    xft_draw(canvas, PAD, y, "Choose a drive:", COL_TEXT_R, COL_TEXT_G, COL_TEXT_B, font_body);
     y += 24;
 
     int list_h = n_disks * ROW_H;
@@ -469,7 +494,7 @@ static void draw_setup(void) {
     int x0 = PAD;
     int w = WIN_W - PAD * 2;
     XSetForeground(dpy, gc, rgb(20, 60, 100));
-    XFillRectangle(dpy, win, gc, x0, y, w, list_h);
+    XFillRectangle(dpy, canvas, gc, x0, y, w, list_h);
 
     for (int i = 0; i < n_disks; i++) {
         int ry = y + i * ROW_H;
@@ -477,9 +502,9 @@ static void draw_setup(void) {
             break;
         if (i == disk_sel) {
             XSetForeground(dpy, gc, rgb(COL_TILE_R, COL_TILE_G, COL_TILE_B));
-            XFillRectangle(dpy, win, gc, x0 + 2, ry + 2, w - 4, ROW_H - 4);
+            XFillRectangle(dpy, canvas, gc, x0 + 2, ry + 2, w - 4, ROW_H - 4);
         }
-        xft_draw(win, x0 + 12, ry + text_baseline(ROW_H, font_body),
+        xft_draw(canvas, x0 + 12, ry + text_baseline(ROW_H, font_body),
             disks[i].line, COL_TEXT_R, COL_TEXT_G, COL_TEXT_B, font_body);
     }
     y += list_h + 20;
@@ -546,7 +571,10 @@ static void ensure_log_window(void) {
         PointerMotionMask;
     XChangeWindowAttributes(dpy, log_win, CWEventMask, &attr);
     XStoreName(dpy, log_win, "Install output");
-    log_gc = XCreateGC(dpy, log_win, 0, NULL);
+    {
+        XGCValues gcv = { .graphics_exposures = False };
+        log_gc = XCreateGC(dpy, log_win, GCGraphicsExposures, &gcv);
+    }
 }
 
 static void show_log_popup(void) {
@@ -571,15 +599,20 @@ static void hide_log_popup(void) {
 
 static void draw_log_popup(void) {
     int lh, visible_lines, text_h, y0, i, close_x, close_y;
+    Drawable lbuf;
 
     if (!log_visible || !log_win)
         return;
+    ensure_log_back_buffer();
+    if (!log_back_pm)
+        return;
+    lbuf = log_back_pm;
     reload_log_lines();
 
     XSetForeground(dpy, log_gc, rgb(24, 36, 56));
-    XFillRectangle(dpy, log_win, log_gc, 0, 0, LOG_WIN_W, LOG_WIN_H);
+    XFillRectangle(dpy, lbuf, log_gc, 0, 0, LOG_WIN_W, LOG_WIN_H);
 
-    xft_draw(log_win, LOG_PAD, LOG_PAD + 18, "Install output",
+    xft_draw(lbuf, LOG_PAD, LOG_PAD + 18, "Install output",
         COL_TEXT_R, COL_TEXT_G, COL_TEXT_B, font_head);
 
     lh = font_log ? font_log->height + 2 : 14;
@@ -597,20 +630,21 @@ static void draw_log_popup(void) {
 
     y0 = LOG_PAD + 36;
     XSetForeground(dpy, log_gc, rgb(12, 24, 40));
-    XFillRectangle(dpy, log_win, log_gc, LOG_PAD, y0, LOG_WIN_W - LOG_PAD * 2, text_h);
+    XFillRectangle(dpy, lbuf, log_gc, LOG_PAD, y0, LOG_WIN_W - LOG_PAD * 2, text_h);
 
     for (i = 0; i < visible_lines; i++) {
         int idx = log_scroll + i;
         if (idx >= n_log_lines)
             break;
-        xft_draw(log_win, LOG_PAD + 8, y0 + 8 + (i + 1) * lh,
+        xft_draw(lbuf, LOG_PAD + 8, y0 + 8 + (i + 1) * lh,
             log_lines[idx], 220, 230, 245, font_log);
     }
 
     close_x = LOG_WIN_W - LOG_PAD - LOG_CLOSE_W;
     close_y = LOG_WIN_H - LOG_PAD - LOG_CLOSE_H;
-    draw_metro_btn_d(log_win, log_gc, close_x, close_y, LOG_CLOSE_W, LOG_CLOSE_H,
+    draw_metro_btn_d(lbuf, log_gc, close_x, close_y, LOG_CLOSE_W, LOG_CLOSE_H,
         "Close", log_close_hover, 1);
+    present_log_frame();
 }
 
 static void install_output_btn(int *bx, int *by) {
@@ -653,7 +687,7 @@ static void draw_installing(void) {
     char msg[256];
     int st = read_install_status(&pct, msg, sizeof msg);
 
-    xft_draw(win, PAD, PAD + 30, "Installing Backroot 8…",
+    xft_draw(canvas, PAD, PAD + 30, "Installing Backroot 8…",
         COL_TEXT_R, COL_TEXT_G, COL_TEXT_B, font_title);
 
     int bar_x = PAD;
@@ -661,18 +695,18 @@ static void draw_installing(void) {
     int bar_w = WIN_W - PAD * 2;
     int bar_h = 28;
     XSetForeground(dpy, gc, rgb(20, 60, 100));
-    XFillRectangle(dpy, win, gc, bar_x, bar_y, bar_w, bar_h);
+    XFillRectangle(dpy, canvas, gc, bar_x, bar_y, bar_w, bar_h);
     if (pct < 0)
         pct = 0;
     if (pct > 100)
         pct = 100;
     XSetForeground(dpy, gc, rgb(255, 255, 255));
-    XFillRectangle(dpy, win, gc, bar_x + 2, bar_y + 2,
+    XFillRectangle(dpy, canvas, gc, bar_x + 2, bar_y + 2,
         (bar_w - 4) * pct / 100, bar_h - 4);
 
     if (!msg[0])
         snprintf(msg, sizeof msg, "Preparing installation…");
-    xft_draw(win, PAD, bar_y + bar_h + 24, msg,
+    xft_draw(canvas, PAD, bar_y + bar_h + 24, msg,
         COL_MUTED_R, COL_MUTED_G, COL_MUTED_B, font_body);
 
     {
@@ -704,9 +738,9 @@ static void draw_failed(void) {
     int sw = text_width(font_body, sub);
     int cy = WIN_H / 2 - 40;
 
-    xft_draw(win, (WIN_W - tw) / 2, cy,
+    xft_draw(canvas, (WIN_W - tw) / 2, cy,
         title, COL_TEXT_R, COL_TEXT_G, COL_TEXT_B, font_title);
-    xft_draw(win, (WIN_W - sw) / 2, cy + (font_title ? font_title->height + 24 : 56),
+    xft_draw(canvas, (WIN_W - sw) / 2, cy + (font_title ? font_title->height + 24 : 56),
         sub, COL_MUTED_R, COL_MUTED_G, COL_MUTED_B, font_body);
 
     int bx = (WIN_W - BTN_W) / 2;
@@ -729,20 +763,24 @@ static void draw_all_done(void) {
 
     const char *title = "All done!";
     int tw = text_width(font_title, title);
-    xft_draw(win, (WIN_W - tw) / 2, WIN_H / 2 - 50,
+    xft_draw(canvas, (WIN_W - tw) / 2, WIN_H / 2 - 50,
         title, COL_TEXT_R, COL_TEXT_G, COL_TEXT_B, font_title);
 
     char sub[128];
     snprintf(sub, sizeof sub,
         "Your computer will shut down in %d seconds", left);
     int sw = text_width(font_body, sub);
-    xft_draw(win, (WIN_W - sw) / 2, WIN_H / 2 + 10,
+    xft_draw(canvas, (WIN_W - sw) / 2, WIN_H / 2 + 10,
         sub, COL_MUTED_R, COL_MUTED_G, COL_MUTED_B, font_body);
 }
 
 static void draw_all(void) {
+    ensure_back_buffer();
+    if (!back_pm)
+        return;
+    canvas = back_pm;
     XSetForeground(dpy, gc, rgb(COL_BG_R, COL_BG_G, COL_BG_B));
-    XFillRectangle(dpy, win, gc, 0, 0, WIN_W, WIN_H);
+    XFillRectangle(dpy, canvas, gc, 0, 0, WIN_W, WIN_H);
 
     switch (step) {
     case STEP_WELCOME:
@@ -761,6 +799,7 @@ static void draw_all(void) {
         draw_failed();
         break;
     }
+    present_frame();
 }
 
 static int point_in_rect(int x, int y, int rx, int ry, int rw, int rh) {
@@ -945,7 +984,10 @@ int main(void) {
     XSetClassHint(dpy, win, &ch);
     set_wm_name();
 
-    gc = XCreateGC(dpy, win, 0, NULL);
+    {
+        XGCValues gcv = { .graphics_exposures = False };
+        gc = XCreateGC(dpy, win, GCGraphicsExposures, &gcv);
+    }
     XMapRaised(dpy, win);
     draw_all();
 
