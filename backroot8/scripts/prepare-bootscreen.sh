@@ -43,9 +43,11 @@ logo_y = int(CANVAS_H * LOGO_CENTER_Y_FRAC) - nh // 2
 
 bg = Image.new("RGB", (CANVAS_W, CANVAS_H), (0, 0, 0))
 bg.paste(emblem, (logo_x, logo_y), emblem)
+# Plymouth/fb viewers need opaque 24-bit RGB PNGs (no palette / no alpha-only assets).
+bg = bg.convert("RGB")
 
 out.parent.mkdir(parents=True, exist_ok=True)
-bg.save(out, format="PNG")
+bg.save(out, format="PNG", optimize=False)
 
 theme_boot.parent.mkdir(parents=True, exist_ok=True)
 bg.save(theme_boot, format="PNG")

@@ -104,9 +104,11 @@ systemctl enable sshd
 # tty1 is owned by backroot8-desktop (startx); desktop unit Conflicts=getty@tty1.
 systemctl disable getty@tty1.service
 
-sed -i 's/^HOOKS=.*/HOOKS=(base udev modconf kms block plymouth backroot8_iso backroot8_root filesystems fsck)/' /etc/mkinitcpio.conf
+sed -i 's/^HOOKS=.*/HOOKS=(base udev modconf kms block plymouth backroot8_splash backroot8_iso backroot8_root filesystems fsck)/' /etc/mkinitcpio.conf
 grep -q '^MODULES=.*overlay' /etc/mkinitcpio.conf || \
     sed -i 's/^MODULES=(/MODULES=(overlay /' /etc/mkinitcpio.conf
+grep -q 'bochs_drm' /etc/mkinitcpio.conf || \
+    sed -i 's/^MODULES=(/MODULES=(bochs_drm simpledrm /' /etc/mkinitcpio.conf
 pacman -Syu --noconfirm
 CHROOT
 
@@ -131,7 +133,8 @@ rm -rf "$SEGOE_TMP"
 arch-chroot "$ROOTFS" plymouth-set-default-theme -R backroot8
 
 arch-chroot "$ROOTFS" systemctl enable \
-    plymouth-start.service backroot8-live-cow.service backroot8-desktop.service sshd \
+    plymouth-start.service backroot8-fb-splash.service backroot8-live-cow.service \
+    backroot8-desktop.service sshd \
     2>/dev/null || true
 
 mkdir -p "$ROOTFS/root"

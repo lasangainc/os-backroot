@@ -1,35 +1,30 @@
-# Backroot 8 — emblem at Windows-style position (centered, ~36% from top)
+# Backroot 8 — full bootscreen (emblem at Windows-style position baked into PNG)
 
 Window.SetBackgroundTopColor(0.0, 0.0, 0.0);
 Window.SetBackgroundBottomColor(0.0, 0.0, 0.0);
 
-# Match prepare-bootscreen.sh layout
-LogoHeightFraction = 0.11;
-LogoCenterYFraction = 0.36;
+boot_image = Image("bootscreen.png");
+boot_sprite = Sprite(boot_image);
 
-emblem_image = Image("emblem.png");
-emblem_sprite = Sprite();
-
-fun place_emblem ()
+fun refresh_callback ()
 {
     screen_width = Window.GetWidth();
     screen_height = Window.GetHeight();
-
     if (screen_width < 1 || screen_height < 1)
         return;
 
-    target_h = screen_height * LogoHeightFraction;
-    scale = target_h / emblem_image.GetHeight();
-    scaled_w = emblem_image.GetWidth() * scale;
-    scaled_h = emblem_image.GetHeight() * scale;
-    scaled = emblem_image.Scale(scaled_w, scaled_h);
+    scale = Math.Min(screen_width / boot_image.GetWidth(),
+                     screen_height / boot_image.GetHeight());
+    scaled_width = boot_image.GetWidth() * scale;
+    scaled_height = boot_image.GetHeight() * scale;
+    scaled_image = boot_image.Scale(scaled_width, scaled_height);
 
-    emblem_sprite.SetImage(scaled);
-    emblem_sprite.SetX((screen_width - scaled_w) / 2);
-    emblem_sprite.SetY(screen_height * LogoCenterYFraction - scaled_h / 2);
-    emblem_sprite.SetZ(10);
-    emblem_sprite.SetOpacity(1);
+    boot_sprite.SetImage(scaled_image);
+    boot_sprite.SetX(Window.GetX() + screen_width / 2 - scaled_width / 2);
+    boot_sprite.SetY(Window.GetY() + screen_height / 2 - scaled_height / 2);
+    boot_sprite.SetZ(10000);
+    boot_sprite.SetOpacity(1);
 }
 
-place_emblem();
-Window.SetRefreshFunction(place_emblem);
+Plymouth.SetRefreshFunction(refresh_callback);
+refresh_callback();
