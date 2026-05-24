@@ -39,7 +39,8 @@ fi
 
 # Default terminal (skip during live install wizard or OOBE)
 if ! /usr/lib/backroot8/is-live-boot.sh && [ ! -f /etc/backroot8/oobe-pending ]; then
-    xterm -fa Monospace -fs 11 -bg "#1a1a22" -fg "#e8e8ec" -title root@Backroot8 -e /bin/bash -l &
+    xterm -fa Monospace -fs 11 -bg "#1a1a22" -fg "#e8e8ec" \
+        -title "${USER:-root}@Backroot8" -e /bin/bash -l &
 fi
 
 if [ -n "${SPLASH_PID:-}" ]; then

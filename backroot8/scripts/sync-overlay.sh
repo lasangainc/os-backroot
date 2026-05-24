@@ -47,6 +47,10 @@ install -Dm755 "$ROOT/rootfs-overlay/usr/lib/backroot8/br8-install-to-disk.sh" \
     "$DEST/usr/lib/backroot8/br8-install-to-disk.sh"
 install -Dm755 "$ROOT/rootfs-overlay/usr/lib/backroot8/br8-oobe-setup.sh" \
     "$DEST/usr/lib/backroot8/br8-oobe-setup.sh"
+install -Dm755 "$ROOT/rootfs-overlay/usr/lib/backroot8/br8-oobe-finish-login.sh" \
+    "$DEST/usr/lib/backroot8/br8-oobe-finish-login.sh"
+install -Dm755 "$ROOT/rootfs-overlay/usr/lib/backroot8/br8-desktop-session.sh" \
+    "$DEST/usr/lib/backroot8/br8-desktop-session.sh"
 install -Dm755 "$ROOT/rootfs-overlay/usr/lib/backroot8/br8-list-install-disks.sh" \
     "$DEST/usr/lib/backroot8/br8-list-install-disks.sh"
 
