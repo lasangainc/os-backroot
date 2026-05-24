@@ -314,7 +314,8 @@ static void present_frame(void) {
 }
 
 static void save_wallpaper_choice(void) {
-    mkdir("/run/br8-oobe", 0755);
+    mkdir("/run/br8-oobe", 1777);
+    chmod("/run/br8-oobe", 01777);
     FILE *fp = fopen(WALLPAPER_CHOICE, "w");
     if (fp) {
         fprintf(fp, "%d\n", wallpaper_sel);
@@ -526,7 +527,8 @@ static void start_setup(void) {
 
     char pass_file[128];
     snprintf(pass_file, sizeof pass_file, "/run/br8-oobe/pass");
-    mkdir("/run/br8-oobe", 0755);
+    mkdir("/run/br8-oobe", 1777);
+    chmod("/run/br8-oobe", 01777);
     FILE *fp = fopen(pass_file, "w");
     if (fp) {
         fputs(password, fp);
