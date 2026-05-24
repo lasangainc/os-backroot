@@ -678,11 +678,40 @@ static void finish_login(void) {
     }
 }
 
+static int root_cardinal(const char *name) {
+    Atom atom = XInternAtom(dpy, name, False);
+    Atom actual;
+    int fmt;
+    unsigned long n, bytes;
+    unsigned long *data = NULL;
+    int v = 0;
+    if (XGetWindowProperty(dpy, root, atom, 0, 8, False, XA_CARDINAL,
+            &actual, &fmt, &n, &bytes, (unsigned char **)&data) == Success &&
+        data && n > 0)
+        v = data[0] ? 1 : 0;
+    if (data)
+        XFree(data);
+    return v;
+}
+
+static void clear_metro_active(void) {
+    Atom atom = XInternAtom(dpy, "_BR8_METRO_ACTIVE", False);
+    unsigned long v = 0;
+    XChangeProperty(dpy, root, atom, XA_CARDINAL, 32, PropModeReplace,
+        (unsigned char *)&v, 1);
+    XFlush(dpy);
+}
+
 static int panel_is_ready(void) {
     return access(PANEL_READY, F_OK) == 0;
 }
 
+static int loading_handoff_done(void) {
+    return panel_is_ready() && !root_cardinal("_BR8_METRO_ACTIVE");
+}
+
 static void clear_loading_state(void) {
+    clear_metro_active();
     unlink(KEEP_LOADING);
     unlink(PANEL_READY);
 }
@@ -690,7 +719,7 @@ static void clear_loading_state(void) {
 static int run_event_loop(int until_panel) {
     int xfd = ConnectionNumber(dpy);
     int running = 1;
-  time_t start = time(NULL);
+    time_t start = time(NULL);
 
     while (running) {
         struct timeval tv = { .tv_sec = 0,
@@ -705,7 +734,7 @@ static int run_event_loop(int until_panel) {
             draw_all();
         }
 
-        if (until_panel && panel_is_ready()) {
+        if (until_panel && loading_handoff_done()) {
             clear_loading_state();
             running = 0;
             continue;
@@ -765,7 +794,13 @@ static int open_display_window(void) {
 
     win = XCreateSimpleWindow(dpy, root, 0, 0, win_w, win_h, 0,
         BlackPixel(dpy, screen), rgb(COL_BG_R, COL_BG_G, COL_BG_B));
-    br8_set_metro(dpy, win);
+    if (loading_only) {
+        XSetWindowAttributes wa;
+        wa.override_redirect = True;
+        XChangeWindowAttributes(dpy, win, CWOverrideRedirect, &wa);
+    } else {
+        br8_set_metro(dpy, win);
+    }
     XStoreName(dpy, win, "Backroot 8 Setup");
 
     gc = XCreateGC(dpy, win, 0, NULL);

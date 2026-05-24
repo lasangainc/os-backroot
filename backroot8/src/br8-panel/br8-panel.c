@@ -1008,8 +1008,14 @@ int main(void) {
     gc = XCreateGC(dpy, panel, 0, NULL);
     load_desktop_icon_map();
     emblem_init();
+    start_menu_open = 0;
     XMapRaised(dpy, panel);
     draw_panel();
+    sync_panel_visibility();
+    if (!read_start_open() && !read_metro_active()) {
+        XMapRaised(dpy, panel);
+        draw_panel();
+    }
     {
         mkdir("/run/br8-oobe", 0755);
         FILE *rf = fopen("/run/br8-oobe/panel-ready", "w");

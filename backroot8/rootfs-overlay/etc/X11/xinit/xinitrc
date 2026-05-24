@@ -31,7 +31,7 @@ else
     [ "$OOBE_LOADING" = 0 ] && xsetroot -solid "#1e2030"
 fi
 
-# Panel (launcher captures crashes for WM error UI)
+# Panel before WM so the taskbar maps before br8-wm manages clients
 /usr/share/backroot8/br8-panel-launcher.sh &
 PANEL_PID=$!
 
@@ -57,6 +57,14 @@ fi
 if [ -n "${SPLASH_PID:-}" ]; then
     sleep 1
     kill "$SPLASH_PID" 2>/dev/null || true
+fi
+
+# Brief pause so panel maps before WM adopts existing windows (OOBE handoff)
+if [ "$OOBE_LOADING" = 1 ]; then
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+        [ -f /run/br8-oobe/panel-ready ] && break
+        sleep 0.2
+    done
 fi
 
 # Window manager (exec keeps the X session alive; OOBE loading overlay stays above until panel is up)
