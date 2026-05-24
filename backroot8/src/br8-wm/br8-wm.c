@@ -46,6 +46,8 @@
 #define CRASH_RESTART "/tmp/br8-panel.restart"
 #define BTN_W 30
 #define CLOSE_W 34
+#define CLOSE_BOX_W 22
+#define CLOSE_BOX_TOP 0
 #define RESIZE_SZ 14
 #define MIN_FRAME_W 200
 #define MIN_FRAME_H 120
@@ -297,13 +299,24 @@ static void draw_max_button(Client *c) {
 }
 
 static void draw_close_button(Client *c) {
+    int w = CLOSE_W;
+    int h = TITLE_H;
+    int bx = (w - CLOSE_BOX_W) / 2;
+    int by = CLOSE_BOX_TOP;
+    int bw = CLOSE_BOX_W;
+    int bh = h - CLOSE_BOX_TOP - 1;
+
+    XSetForeground(dpy, gc_title, rgb(43, 43, 43));
+    XFillRectangle(dpy, c->btn_close, gc_title, 0, 0, w, h);
+
     XSetForeground(dpy, gc_close_fill, rgb(196, 43, 28));
-    XFillRectangle(dpy, c->btn_close, gc_close_fill, 0, 0, CLOSE_W, TITLE_H);
+    XDrawRectangle(dpy, c->btn_close, gc_close_fill, bx, by, bw - 1, bh - 1);
+
     XSetForeground(dpy, gc_close_x, rgb(255, 255, 255));
-    int cx = CLOSE_W / 2;
-    int cy = TITLE_H / 2;
-    int dx = 5;
-    int dy = 5;
+    int cx = w / 2;
+    int cy = by + bh / 2;
+    int dx = 4;
+    int dy = 8;
     XDrawLine(dpy, c->btn_close, gc_close_x, cx - dx, cy - dy, cx + dx, cy + dy);
     XDrawLine(dpy, c->btn_close, gc_close_x, cx - dx, cy + dy, cx + dx, cy - dy);
 }
