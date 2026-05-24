@@ -33,7 +33,7 @@
 #define APP_GAP 8
 #define MAX_APPS 256
 #define MAX_HOME_TILES 24
-#define WALLPAPER "/usr/share/backgrounds/backroot8.jpg"
+#define WALLPAPER_DEFAULT "/usr/share/backgrounds/backroot8.jpg"
 #define USER_PIC "/usr/share/backroot8/default-user.png"
 #define USER_AVATAR_SZ 48
 #define CONFIG_DIR "/root/.config/backroot8"
@@ -151,6 +151,7 @@ static int ctx_is_tile;
 
 static void draw_all(void);
 static void mark_dirty(void);
+static void load_wallpaper(void);
 static int user_avatar_target_x(void);
 static void layout_home(void);
 static void save_layout(void);
@@ -415,6 +416,7 @@ static void show_menu(void) {
     visible = 1;
     ctx_visible = 0;
     sync_start_win_size();
+    load_wallpaper();
     XMapRaised(dpy, start_win);
     begin_open_animation();
     draw_all();
@@ -1172,14 +1174,37 @@ static void draw_user_header(Drawable dst, GC g) {
         xft_draw(dst, ui_font, nx, ny, user_display_name, 255, 255, 255);
 }
 
+static const char *user_home_dir(void) {
+    const char *home = getenv("HOME");
+    struct passwd *pw = getpwuid(getuid());
+    if ((!home || !home[0]) && pw && pw->pw_dir && pw->pw_dir[0])
+        home = pw->pw_dir;
+    if (!home || !home[0])
+        home = "/root";
+    return home;
+}
+
+/* Match xinitrc: per-user wallpaper overrides the system default. */
+static void resolve_wallpaper_path(char *path, size_t path_sz) {
+    char user_wp[512];
+    snprintf(user_wp, sizeof(user_wp), "%s/.config/backroot8/wallpaper.jpg",
+        user_home_dir());
+    if (access(user_wp, R_OK) == 0)
+        snprintf(path, path_sz, "%s", user_wp);
+    else
+        snprintf(path, path_sz, "%s", WALLPAPER_DEFAULT);
+}
+
 static void load_wallpaper(void) {
     if (wallpaper_pm) {
         XFreePixmap(dpy, wallpaper_pm);
         wallpaper_pm = 0;
     }
     wallpaper_ready = 0;
+    char wp_path[512];
+    resolve_wallpaper_path(wp_path, sizeof(wp_path));
     int iw = 0, ih = 0, comp = 0;
-    unsigned char *data = stbi_load(WALLPAPER, &iw, &ih, &comp, 3);
+    unsigned char *data = stbi_load(wp_path, &iw, &ih, &comp, 3);
     if (!data || iw <= 0 || ih <= 0)
         return;
     TileGrid gr;
