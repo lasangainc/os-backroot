@@ -1,3 +1,3 @@
 #!/usr/bin/ash
-# Initramfs entry: source shared boot splash helpers.
+# Initramfs entry: shared boot splash helpers.
 . /usr/lib/backroot8/br8-bootscreen.sh

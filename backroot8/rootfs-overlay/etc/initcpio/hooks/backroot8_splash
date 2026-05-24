@@ -1,5 +1,5 @@
 #!/usr/bin/ash
-# Paint boot emblem on /dev/fb0 early (Plymouth DRM often blank on QEMU -vga std).
+# Paint boot emblem on /dev/fb0 before the Plymouth hook (see mkinitcpio HOOKS order).
 
 br8_fb_splash() {
     grep -q 'br8\.debug' /proc/cmdline && return 0
@@ -15,7 +15,7 @@ br8_fb_splash() {
         return 0
     fi
 
-    fbi -T 1 -d /dev/fb0 -noverbose -fit "$_img" </dev/null 2>/dev/null &
+    br8_fbi_show "$_img" 1
 }
 
 run_hook() {
