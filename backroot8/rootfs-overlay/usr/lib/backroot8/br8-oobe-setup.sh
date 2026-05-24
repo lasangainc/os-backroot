@@ -9,7 +9,7 @@ PASS_FILE="${2:-}"
 [[ -f /etc/backroot8/oobe-pending ]] || exit 0
 
 mkdir -p /run/br8-oobe
-chmod 0755 /run/br8-oobe
+chmod 1777 /run/br8-oobe
 
 if ! id "$USER_NAME" &>/dev/null; then
     useradd -m -G wheel,audio,video,storage -s /bin/bash "$USER_NAME"

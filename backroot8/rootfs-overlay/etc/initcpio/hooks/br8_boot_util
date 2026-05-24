@@ -1,0 +1,12 @@
+#!/usr/bin/ash
+# Shared helpers for Backroot initramfs hooks (sourced by run_hook scripts).
+
+br8_verbose() {
+    grep -q 'br8\.debug' /proc/cmdline
+}
+
+br8_log() {
+    if br8_verbose; then
+        echo "backroot8: $*" >/dev/console
+    fi
+}

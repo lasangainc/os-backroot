@@ -5,6 +5,7 @@ build() {
     add_module loop
     add_module ext4
     add_module overlay
+    add_file /etc/initcpio/hooks/br8_boot_util /usr/lib/initcpio/br8_boot_util
     add_runscript
 }
 help() {

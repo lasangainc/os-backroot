@@ -1,7 +1,8 @@
 [Unit]
 Description=Backroot 8 Desktop (X11)
-After=network.target backroot8-live-cow.service backroot8-splash.service
+After=network.target backroot8-live-cow.service plymouth-start.service backroot8-fb-splash.service
 Wants=backroot8-live-cow.service
+Conflicts=getty@tty1.service
 
 [Service]
 User=root

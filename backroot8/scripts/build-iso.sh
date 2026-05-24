@@ -68,7 +68,17 @@ menuentry "Backroot 8 Live" {
     else
         search --no-floppy --file --set=root /boot/vmlinuz-linux
     fi
-    linux /boot/vmlinuz-linux backroot8iso rw quiet loglevel=3 console=ttyS0,115200 earlyprintk=ttyS0,115200
+    linux /boot/vmlinuz-linux backroot8iso rw quiet splash loglevel=3 rd.systemd.show_status=false systemd.show_status=false rd.udev.log_priority=3 vt.global_cursor_default=0 console=ttyS0,115200
+    initrd /boot/initramfs-linux.img
+}
+
+menuentry "Backroot 8 Live (debug)" {
+    if [ -f ($cd0)/boot/vmlinuz-linux ]; then
+        set root=$cd0
+    else
+        search --no-floppy --file --set=root /boot/vmlinuz-linux
+    fi
+    linux /boot/vmlinuz-linux backroot8iso rw br8.debug loglevel=7 plymouth.enable=0 rd.plymouth.enable=0 console=ttyS0,115200
     initrd /boot/initramfs-linux.img
 }
 GRUB

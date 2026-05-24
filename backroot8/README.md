@@ -12,6 +12,7 @@ A minimal desktop environment built from scratch on **Arch Linux** with the prec
 - Window titles show the app name, centered in the title bar
 - Taskbar shows open apps with icons (click to focus)
 - Transparent taskbar (`br8-panel`) — alpha blend only, **no blur**
+- Plymouth boot splash (`backroot8` theme) from initramfs through desktop load
 - Default wallpaper at `/usr/share/backgrounds/backroot8.jpg` (via `feh`)
 - PowerPDF viewer and Settings metro app (wallpaper, display, keyboard, mouse, time zone)
 - Arch precompiled kernel (`linux` package from official repos)

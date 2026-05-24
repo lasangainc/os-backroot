@@ -1,0 +1,8 @@
+[Plymouth Theme]
+Name=Backroot 8
+Description=Backroot 8 boot splash (centered emblem on black)
+ModuleName=script
+
+[script]
+ImageDir=/usr/share/plymouth/themes/backroot8
+ScriptFile=/usr/share/plymouth/themes/backroot8/backroot8.script

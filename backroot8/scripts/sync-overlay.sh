@@ -78,8 +78,12 @@ if [ -d "$ROOT/rootfs-overlay/usr/share/backroot8/oobe-wallpapers" ]; then
 fi
 install -Dm644 "$ROOT/rootfs-overlay/etc/tmpfiles.d/br8-oobe.conf" \
     "$DEST/etc/tmpfiles.d/br8-oobe.conf"
-install -Dm755 "$ROOT/rootfs-overlay/usr/share/backroot8/show-splash.sh" \
-    "$DEST/usr/share/backroot8/show-splash.sh"
+install -Dm755 "$ROOT/rootfs-overlay/usr/lib/backroot8/br8-plymouth-quit.sh" \
+    "$DEST/usr/lib/backroot8/br8-plymouth-quit.sh"
+install -Dm755 "$ROOT/rootfs-overlay/usr/share/backroot8/show-fb-splash.sh" \
+    "$DEST/usr/share/backroot8/show-fb-splash.sh"
+install -Dm644 "$ROOT/rootfs-overlay/etc/systemd/system/backroot8-fb-splash.service" \
+    "$DEST/etc/systemd/system/backroot8-fb-splash.service"
 install -Dm755 "$ROOT/rootfs-overlay/usr/share/backroot8/br8-panel-launcher.sh" \
     "$DEST/usr/share/backroot8/br8-panel-launcher.sh"
 install -Dm644 "$ROOT/rootfs-overlay/etc/profile.d/backroot8.sh" "$DEST/etc/profile.d/backroot8.sh"
@@ -96,8 +100,16 @@ install -Dm755 "$ROOT/rootfs-overlay/usr/local/bin/neofetch" "$DEST/usr/local/bi
 install -Dm644 "$ROOT/rootfs-overlay/etc/motd" "$DEST/etc/motd"
 install -Dm644 "$ROOT/rootfs-overlay/etc/systemd/system/backroot8-desktop.service" \
     "$DEST/etc/systemd/system/backroot8-desktop.service"
-install -Dm644 "$ROOT/rootfs-overlay/etc/systemd/system/backroot8-splash.service" \
-    "$DEST/etc/systemd/system/backroot8-splash.service"
+install -Dm644 "$ROOT/rootfs-overlay/etc/plymouth/plymouthd.conf" \
+    "$DEST/etc/plymouth/plymouthd.conf"
+install -Dm644 "$ROOT/rootfs-overlay/usr/share/plymouth/themes/backroot8/backroot8.plymouth" \
+    "$DEST/usr/share/plymouth/themes/backroot8/backroot8.plymouth"
+install -Dm644 "$ROOT/rootfs-overlay/usr/share/plymouth/themes/backroot8/backroot8.script" \
+    "$DEST/usr/share/plymouth/themes/backroot8/backroot8.script"
+install -Dm644 "$ROOT/rootfs-overlay/usr/share/plymouth/themes/backroot8/bootscreen.png" \
+    "$DEST/usr/share/plymouth/themes/backroot8/bootscreen.png"
+install -Dm644 "$ROOT/rootfs-overlay/usr/share/plymouth/themes/backroot8/emblem.png" \
+    "$DEST/usr/share/plymouth/themes/backroot8/emblem.png"
 install -Dm644 "$ROOT/rootfs-overlay/etc/systemd/system/backroot8-live-cow.service" \
     "$DEST/etc/systemd/system/backroot8-live-cow.service"
 install -Dm755 "$ROOT/rootfs-overlay/usr/lib/backroot8/live-cow-setup.sh" \
@@ -114,5 +126,11 @@ install -Dm755 "$ROOT/rootfs-overlay/etc/initcpio/install/backroot8_root" \
     "$DEST/etc/initcpio/install/backroot8_root"
 install -Dm755 "$ROOT/rootfs-overlay/etc/initcpio/hooks/backroot8_root" \
     "$DEST/etc/initcpio/hooks/backroot8_root"
+install -Dm755 "$ROOT/rootfs-overlay/etc/initcpio/hooks/br8_boot_util" \
+    "$DEST/etc/initcpio/hooks/br8_boot_util"
+install -Dm755 "$ROOT/rootfs-overlay/etc/initcpio/install/backroot8_splash" \
+    "$DEST/etc/initcpio/install/backroot8_splash"
+install -Dm755 "$ROOT/rootfs-overlay/etc/initcpio/hooks/backroot8_splash" \
+    "$DEST/etc/initcpio/hooks/backroot8_splash"
 
 log "Overlay sync complete: $DEST"

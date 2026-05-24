@@ -10,6 +10,8 @@ br8_mount() {
 }
 
 run_hook() {
+    . /usr/lib/initcpio/br8_boot_util
+
     grep -q 'backroot8iso' /proc/cmdline || return 0
     [ -d /run/br8/sq/bin ] || return 0
     [ -f /run/br8/sq/backroot8-root.img ] && return 0
@@ -36,11 +38,10 @@ run_hook() {
         echo "backroot8_root: overlay mount failed" >/dev/console
         return 1
     fi
-    echo "backroot8_root: live root on overlay" >/dev/console
+    br8_log "live root on overlay"
     touch /run/br8/overlay_root
-    # Root is already on /new_root; skip LABEL= mount in init (would stack ro fs).
     default_mount_handler() {
-        msg ":: Backroot 8 overlay root ready"
+        br8_log "overlay root ready"
         return 0
     }
 }
