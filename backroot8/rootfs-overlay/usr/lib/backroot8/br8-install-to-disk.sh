@@ -208,8 +208,9 @@ status 70 "Installing boot loaders…"
 chroot_cmd /bin/bash -eux <<CHROOT
 set -e
 mkinitcpio -P
-grub-install --target=i386-pc --force-extra-removable "$DISK"
-grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=Backroot8 --recheck
+grub-install --target=i386-pc "$DISK"
+grub-install --target=x86_64-efi --efi-directory=/boot/efi \
+    --bootloader-id=Backroot8 --recheck --removable
 grub-mkconfig -o /boot/grub/grub.cfg
 CHROOT
 
