@@ -1859,10 +1859,10 @@ static void open_fonts(void) {
         }
     }
     static const char *const tile_names[] = {
-        "Segoe UI Semibold-15:antialias=true",
-        "Segoe UI-15:antialias=true",
         "Segoe UI Light-15:antialias=true",
-        "Segoe UI-14:antialias=true",
+        "Segoe UI Light-16:antialias=true",
+        "Segoe UI-15:weight=light:antialias=true",
+        "Segoe UI Light-14:antialias=true",
         NULL
     };
     for (int i = 0; tile_names[i]; i++) {
