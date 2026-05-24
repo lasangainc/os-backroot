@@ -100,6 +100,9 @@ static Pixmap thumb_pm[WALLPAPER_N];
 static int thumb_loaded[WALLPAPER_N];
 static int thumb_dw[WALLPAPER_N];
 static int thumb_dh[WALLPAPER_N];
+static Pixmap back_pm;
+static int back_pm_w, back_pm_h;
+static Drawable canvas;
 
 static unsigned long rgb(int r, int g, int b) {
     XColor c;
@@ -287,6 +290,29 @@ static void load_all_thumbs(void) {
         load_thumb(i);
 }
 
+static void free_back_buffer(void) {
+    if (back_pm) {
+        XFreePixmap(dpy, back_pm);
+        back_pm = 0;
+    }
+    back_pm_w = back_pm_h = 0;
+}
+
+static void ensure_back_buffer(void) {
+    if (back_pm && back_pm_w == win_w && back_pm_h == win_h)
+        return;
+    free_back_buffer();
+    back_pm_w = win_w;
+    back_pm_h = win_h;
+    back_pm = XCreatePixmap(dpy, win, (unsigned)back_pm_w, (unsigned)back_pm_h,
+        DefaultDepth(dpy, screen));
+}
+
+static void present_frame(void) {
+    if (back_pm)
+        XCopyArea(dpy, back_pm, win, gc, 0, 0, (unsigned)back_pm_w, (unsigned)back_pm_h, 0, 0);
+}
+
 static void save_wallpaper_choice(void) {
     mkdir("/run/br8-oobe", 0755);
     FILE *fp = fopen(WALLPAPER_CHOICE, "w");
@@ -302,9 +328,9 @@ static void draw_field_box(int fx, int fy, const char *value, const char *placeh
     int border_g = active ? COL_ACCENT_G : 200;
     int border_b = active ? COL_ACCENT_B : 210;
     XSetForeground(dpy, gc, rgb(border_r, border_g, border_b));
-    XDrawRectangle(dpy, win, gc, fx, fy, FIELD_W, FIELD_H);
+    XDrawRectangle(dpy, canvas, gc, fx, fy, FIELD_W, FIELD_H);
     XSetForeground(dpy, gc, rgb(COL_FIELD_R, COL_FIELD_G, COL_FIELD_B));
-    XFillRectangle(dpy, win, gc, fx + 1, fy + 1, FIELD_W - 2, FIELD_H - 2);
+    XFillRectangle(dpy, canvas, gc, fx + 1, fy + 1, FIELD_W - 2, FIELD_H - 2);
 
     char show[PASS_MAX + 4];
     if (masked) {
@@ -326,7 +352,7 @@ static void draw_field_box(int fx, int fy, const char *value, const char *placeh
         tb = 150;
     }
     if (draw_text[0])
-        xft_draw(win, fx + 12, fy + text_baseline(FIELD_H, font_field),
+        xft_draw(canvas, fx + 12, fy + text_baseline(FIELD_H, font_field),
             draw_text, tr, tg, tb, font_field);
 }
 
@@ -334,7 +360,7 @@ static void draw_field_row(int row_y, const char *label, const char *value,
         const char *placeholder, int masked, int active) {
     int field_x = PAD + LABEL_W;
     int label_y = row_y + text_baseline(FIELD_H, font_label);
-    xft_draw(win, PAD, label_y, label, COL_MUTED_R, COL_MUTED_G, COL_MUTED_B, font_label);
+    xft_draw(canvas, PAD, label_y, label, COL_MUTED_R, COL_MUTED_G, COL_MUTED_B, font_label);
     draw_field_box(field_x, row_y, value, placeholder, masked, active);
 }
 
@@ -346,11 +372,11 @@ static void draw_finish_btn(int btn_x, int btn_y, const char *label, int hover) 
     int fg_g = hover ? COL_BG_G : 255;
     int fg_b = hover ? COL_BG_B : 255;
     XSetForeground(dpy, gc, rgb(bg_r, bg_g, bg_b));
-    XFillRectangle(dpy, win, gc, btn_x, btn_y, BTN_W, BTN_H);
+    XFillRectangle(dpy, canvas, gc, btn_x, btn_y, BTN_W, BTN_H);
     XSetForeground(dpy, gc, rgb(255, 255, 255));
-    XDrawRectangle(dpy, win, gc, btn_x, btn_y, BTN_W - 1, BTN_H - 1);
+    XDrawRectangle(dpy, canvas, gc, btn_x, btn_y, BTN_W - 1, BTN_H - 1);
     int blw = text_width(font_btn, label);
-    xft_draw(win, btn_x + (BTN_W - blw) / 2, btn_y + text_baseline(BTN_H, font_btn),
+    xft_draw(canvas, btn_x + (BTN_W - blw) / 2, btn_y + text_baseline(BTN_H, font_btn),
         label, fg_r, fg_g, fg_b, font_btn);
 }
 
@@ -369,9 +395,9 @@ static void draw_personalize(void) {
     const char *subtitle = "Choose a background for your desktop.";
 
     int header_h = font_header ? font_header->height : 48;
-    xft_draw(win, PAD, PAD + text_baseline(header_h, font_header),
+    xft_draw(canvas, PAD, PAD + text_baseline(header_h, font_header),
         title, COL_TEXT_R, COL_TEXT_G, COL_TEXT_B, font_header);
-    xft_draw(win, PAD, PAD + header_h + 20 + text_baseline(font_sub ? font_sub->height : 22, font_sub),
+    xft_draw(canvas, PAD, PAD + header_h + 20 + text_baseline(font_sub ? font_sub->height : 22, font_sub),
         subtitle, COL_MUTED_R, COL_MUTED_G, COL_MUTED_B, font_sub);
 
     int thumbs_y, btn_x, btn_y, thumb_x0;
@@ -382,12 +408,12 @@ static void draw_personalize(void) {
         int sel = (i == wallpaper_sel);
         XSetForeground(dpy, gc, rgb(sel ? COL_ACCENT_R : 200, sel ? COL_ACCENT_G : 200,
             sel ? COL_ACCENT_B : 210));
-        XDrawRectangle(dpy, win, gc, tx - 2, thumbs_y - 2, THUMB_W + 4, THUMB_H + 4);
+        XDrawRectangle(dpy, canvas, gc, tx - 2, thumbs_y - 2, THUMB_W + 4, THUMB_H + 4);
         if (thumb_loaded[i])
-            XCopyArea(dpy, thumb_pm[i], win, gc, 0, 0, THUMB_W, THUMB_H, tx, thumbs_y);
+            XCopyArea(dpy, thumb_pm[i], canvas, gc, 0, 0, THUMB_W, THUMB_H, tx, thumbs_y);
         else {
             XSetForeground(dpy, gc, rgb(COL_FIELD_R, COL_FIELD_G, COL_FIELD_B));
-            XFillRectangle(dpy, win, gc, tx, thumbs_y, THUMB_W, THUMB_H);
+            XFillRectangle(dpy, canvas, gc, tx, thumbs_y, THUMB_W, THUMB_H);
         }
     }
     draw_finish_btn(btn_x, btn_y, "Next", next_hover);
@@ -417,9 +443,9 @@ static void draw_account(void) {
     (void)title_y;
 
     int header_h = font_header ? font_header->height : 48;
-    xft_draw(win, PAD, PAD + text_baseline(header_h, font_header),
+    xft_draw(canvas, PAD, PAD + text_baseline(header_h, font_header),
         title, COL_TEXT_R, COL_TEXT_G, COL_TEXT_B, font_header);
-    xft_draw(win, PAD, PAD + header_h + 20 + text_baseline(font_sub ? font_sub->height : 22, font_sub),
+    xft_draw(canvas, PAD, PAD + header_h + 20 + text_baseline(font_sub ? font_sub->height : 22, font_sub),
         subtitle, COL_MUTED_R, COL_MUTED_G, COL_MUTED_B, font_sub);
 
     draw_field_row(row_user, "User name", username, "Example: John", 0, focus == FOCUS_USER);
@@ -436,11 +462,11 @@ static void draw_loading(void) {
     int sw = text_width(font_sub, sub_text);
     int cy = win_h / 2;
 
-    xft_draw(win, (win_w - mw) / 2,
+    xft_draw(canvas, (win_w - mw) / 2,
         cy + text_baseline(font_header ? font_header->height : 42, font_header),
         main_text, COL_TEXT_R, COL_TEXT_G, COL_TEXT_B, font_header);
 
-    xft_draw(win, (win_w - sw) / 2,
+    xft_draw(canvas, (win_w - sw) / 2,
         cy + (font_header ? font_header->height : 42) + 36,
         sub_text, COL_MUTED_R, COL_MUTED_G, COL_MUTED_B, font_sub);
 
@@ -449,20 +475,25 @@ static void draw_loading(void) {
     for (int i = 0; i < dots; i++)
         strcat(dotbuf, ".");
     int dw = text_width(font_sub, dotbuf);
-    xft_draw(win, (win_w - dw) / 2,
+    xft_draw(canvas, (win_w - dw) / 2,
         cy + (font_header ? font_header->height : 42) + 72,
         dotbuf, COL_MUTED_R, COL_MUTED_G, COL_MUTED_B, font_sub);
 }
 
 static void draw_all(void) {
+    ensure_back_buffer();
+    if (!back_pm)
+        return;
+    canvas = back_pm;
     XSetForeground(dpy, gc, rgb(COL_BG_R, COL_BG_G, COL_BG_B));
-    XFillRectangle(dpy, win, gc, 0, 0, win_w, win_h);
+    XFillRectangle(dpy, canvas, gc, 0, 0, win_w, win_h);
     if (phase == PHASE_PERSONALIZE)
         draw_personalize();
     else if (phase == PHASE_ACCOUNT)
         draw_account();
     else
         draw_loading();
+    present_frame();
 }
 
 static int valid_username(const char *s) {
@@ -803,7 +834,10 @@ static int open_display_window(void) {
     }
     XStoreName(dpy, win, "Backroot 8 Setup");
 
-    gc = XCreateGC(dpy, win, 0, NULL);
+    {
+        XGCValues gcv = { .graphics_exposures = False };
+        gc = XCreateGC(dpy, win, GCGraphicsExposures, &gcv);
+    }
     XSelectInput(dpy, win,
         ExposureMask | StructureNotifyMask | KeyPressMask | ButtonPressMask |
         PointerMotionMask);
