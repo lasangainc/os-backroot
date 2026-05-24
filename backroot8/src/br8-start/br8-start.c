@@ -33,7 +33,7 @@
 #define APP_GAP 8
 #define MAX_APPS 256
 #define MAX_HOME_TILES 24
-#define WALLPAPER "/usr/share/backgrounds/backroot8.jpg"
+#define WALLPAPER_DEFAULT "/usr/share/backgrounds/backroot8.jpg"
 #define USER_PIC "/usr/share/backroot8/default-user.png"
 #define USER_AVATAR_SZ 48
 #define CONFIG_DIR "/root/.config/backroot8"
@@ -57,7 +57,7 @@
 typedef enum {
     ACT_TERMINAL,
     ACT_DOLPHIN,
-    ACT_HELLO,
+    ACT_SETTINGS,
     ACT_DESKTOP,
     ACT_EXEC
 } Action;
@@ -160,6 +160,7 @@ static void finish_hide(void);
 static void begin_close_animation(void);
 static int apps_section_visible(void);
 static void apply_menu_motion(double elapsed);
+static void load_wallpaper(void);
 static int user_avatar_target_x(void);
 static void layout_home(void);
 static void save_layout(void);
@@ -452,6 +453,7 @@ static void show_menu(void) {
     visible = 1;
     ctx_visible = 0;
     sync_start_win_size();
+    load_wallpaper();
     XMapRaised(dpy, start_win);
     set_open(1);
     begin_open_animation();
@@ -490,13 +492,13 @@ static void spawn_dolphin(void) {
     _exit(1);
 }
 
-static void spawn_hello(void) {
+static void spawn_settings(void) {
     pid_t pid = fork();
     if (pid != 0)
         return;
     setenv("HOME", "/root", 1);
     setenv("DISPLAY", ":0", 1);
-    execl("/usr/local/bin/backroot-hello", "backroot-hello", NULL);
+    execl("/usr/local/bin/br8-settings", "br8-settings", NULL);
     _exit(1);
 }
 
@@ -518,7 +520,7 @@ static void launch_action(Action act, const char *exec_cmd) {
     switch (act) {
     case ACT_TERMINAL: spawn_terminal(); break;
     case ACT_DOLPHIN: spawn_dolphin(); break;
-    case ACT_HELLO: spawn_hello(); break;
+    case ACT_SETTINGS: spawn_settings(); break;
     case ACT_DESKTOP: break;
     case ACT_EXEC: spawn_exec(exec_cmd); break;
     }
@@ -657,7 +659,7 @@ static void init_default_tiles(void) {
     n_home_tiles = 0;
     add_tile("dolphin", "Dolphin", 0, 120, 215, 'D', ACT_DOLPHIN, NULL, 0, 0);
     add_tile("terminal", "Terminal", 16, 124, 16, 'T', ACT_TERMINAL, NULL, 0, 0);
-    add_tile("hello", "Backroot Hello", 92, 45, 145, 'B', ACT_HELLO, NULL, 0, 0);
+    add_tile("settings", "Settings", 92, 45, 145, 'S', ACT_SETTINGS, NULL, 0, 0);
     add_tile("desktop", "Desktop", 0, 0, 0, ' ', ACT_DESKTOP, NULL, 1, 0);
 }
 
@@ -1231,14 +1233,37 @@ static void draw_user_header(Drawable dst, GC g) {
         xft_draw(dst, ui_font, nx, ny, user_display_name, 255, 255, 255);
 }
 
+static const char *user_home_dir(void) {
+    const char *home = getenv("HOME");
+    struct passwd *pw = getpwuid(getuid());
+    if ((!home || !home[0]) && pw && pw->pw_dir && pw->pw_dir[0])
+        home = pw->pw_dir;
+    if (!home || !home[0])
+        home = "/root";
+    return home;
+}
+
+/* Match xinitrc: per-user wallpaper overrides the system default. */
+static void resolve_wallpaper_path(char *path, size_t path_sz) {
+    char user_wp[512];
+    snprintf(user_wp, sizeof(user_wp), "%s/.config/backroot8/wallpaper.jpg",
+        user_home_dir());
+    if (access(user_wp, R_OK) == 0)
+        snprintf(path, path_sz, "%s", user_wp);
+    else
+        snprintf(path, path_sz, "%s", WALLPAPER_DEFAULT);
+}
+
 static void load_wallpaper(void) {
     if (wallpaper_pm) {
         XFreePixmap(dpy, wallpaper_pm);
         wallpaper_pm = 0;
     }
     wallpaper_ready = 0;
+    char wp_path[512];
+    resolve_wallpaper_path(wp_path, sizeof(wp_path));
     int iw = 0, ih = 0, comp = 0;
-    unsigned char *data = stbi_load(WALLPAPER, &iw, &ih, &comp, 3);
+    unsigned char *data = stbi_load(wp_path, &iw, &ih, &comp, 3);
     if (!data || iw <= 0 || ih <= 0)
         return;
     TileGrid gr;
