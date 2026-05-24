@@ -37,8 +37,11 @@ if ! "$ROOT/scripts/verify-iso-boot.sh"; then
 fi
 
 STAGING="$(mktemp -d)"
+GH_USER="${SUDO_USER:-root}"
 cp "$ISO" "$STAGING/$ASSET_NAME"
-chown "${SUDO_USER:-root}:${SUDO_USER:-root}" "$STAGING/$ASSET_NAME" 2>/dev/null || true
+if [[ -n "$GH_USER" && "$GH_USER" != "root" ]]; then
+    chown -R "$GH_USER:$GH_USER" "$STAGING"
+fi
 
 SHA256="$(sha256sum "$STAGING/$ASSET_NAME" | awk '{print $1}')"
 log "SHA256: $SHA256"
@@ -74,7 +77,6 @@ fi
     echo "\`$(git -C "$ROOT" rev-parse HEAD)\`"
 } >> "$RELEASE_BODY"
 
-GH_USER="${SUDO_USER:-root}"
 if ! sudo -u "$GH_USER" gh release view "$RELEASE_TAG" --repo "$REPO" >/dev/null 2>&1; then
     log "Creating release $RELEASE_TAG..."
     sudo -u "$GH_USER" gh release create "$RELEASE_TAG" \
