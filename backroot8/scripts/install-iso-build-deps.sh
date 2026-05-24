@@ -23,6 +23,7 @@ apt-get install -y -qq \
     libfreetype-dev \
     libx11-dev \
     libxft-dev \
-    pkg-config
+    pkg-config \
+    python3-pil
 
 echo "[backroot8] ISO build dependencies installed."
