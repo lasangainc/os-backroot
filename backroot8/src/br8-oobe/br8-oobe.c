@@ -250,7 +250,7 @@ static void load_thumb(int idx) {
         stbi_image_free(img);
         return;
     }
-    xi->data = (char *)calloc((size_t)THUMB_W * (size_t)THUMB_H, 4);
+    xi->data = (char *)malloc((size_t)THUMB_W * (size_t)THUMB_H * 4);
     if (!xi->data) {
         XDestroyImage(xi);
         XFreePixmap(dpy, thumb_pm[idx]);
@@ -277,7 +277,6 @@ static void load_thumb(int idx) {
     GC tgc = XCreateGC(dpy, thumb_pm[idx], 0, NULL);
     XPutImage(dpy, thumb_pm[idx], tgc, xi, 0, 0, 0, 0, (unsigned int)THUMB_W, (unsigned int)THUMB_H);
     XFreeGC(dpy, tgc);
-    free(xi->data);
     XDestroyImage(xi);
     stbi_image_free(img);
     thumb_loaded[idx] = 1;
