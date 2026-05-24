@@ -24,7 +24,7 @@
 #define DISK_LIST_SCRIPT "/usr/lib/backroot8/br8-list-install-disks.sh"
 #define WIN_H 640
 #define PAD 28
-#define BANNER_MAX_H 300
+#define BANNER_MAX_H 180
 #define BTN_H 44
 #define BTN_W 160
 #define INSTALL_ROW_H 28
