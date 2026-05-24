@@ -50,6 +50,7 @@
 #define COLOR_CACHE_MAX 512
 #define CTX_W 200
 #define CTX_H 36
+#define TILE_HOVER_OUTLINE_W 2
 
 typedef enum {
     ACT_TERMINAL,
@@ -132,6 +133,7 @@ static XftDraw *xft_dc;
 static XftColor xft_white;
 static int xft_white_ok;
 static unsigned long pix_bg, pix_line, pix_ctx_bg, pix_ctx_border;
+static unsigned long pix_tile_hover_outline;
 
 static int frame_dirty;
 
@@ -143,6 +145,7 @@ static int drag_hover_slot;
 static int btn1_down;
 static int btn1_tile_idx;
 static int btn1_x, btn1_y;
+static int hover_tile_idx = -1;
 
 static int ctx_visible;
 static int ctx_x, ctx_y;
@@ -201,6 +204,7 @@ static void init_palette(void) {
     pix_line = rgb(100, 170, 220);
     pix_ctx_bg = rgb(45, 55, 72);
     pix_ctx_border = rgb(120, 140, 170);
+    pix_tile_hover_outline = rgb(180, 180, 180);
     XRenderColor rc = render_rgb(255, 255, 255);
     xft_white_ok = XftColorAllocValue(dpy, visual, cmap, &rc, &xft_white);
 }
@@ -369,6 +373,7 @@ static void hide_menu(void) {
     dragging = 0;
     drag_tile_idx = -1;
     ctx_visible = 0;
+    hover_tile_idx = -1;
     open_anim = 0.0;
     layout_animating = 0;
     frame_dirty = 0;
@@ -1257,6 +1262,28 @@ static void draw_tile_label(Drawable dst, const Tile *t, int sx, int sy, int sh)
     xft_draw(dst, ui_font, sx + 8, sy + sh - 10, t->label, 255, 255, 255);
 }
 
+static void draw_tile_hover_outline(Drawable dst, GC g, int sx, int sy, int sw, int sh) {
+    if (sw < TILE_HOVER_OUTLINE_W + 2 || sh < TILE_HOVER_OUTLINE_W + 2)
+        return;
+    XSetForeground(dpy, g, pix_tile_hover_outline);
+    for (int i = 0; i < TILE_HOVER_OUTLINE_W; i++) {
+        int o = i;
+        XDrawRectangle(dpy, dst, g, sx + o, sy + o,
+            sw - 2 * o - 1, sh - 2 * o - 1);
+    }
+}
+
+static void set_tile_hover(int ti) {
+    if (dragging || open_anim < 1.0)
+        ti = -1;
+    if (ti < 0 || ti >= n_home_tiles)
+        ti = -1;
+    if (ti == hover_tile_idx)
+        return;
+    hover_tile_idx = ti;
+    mark_dirty();
+}
+
 static void tile_screen_rect(const Tile *t, int ti, int dragging_now,
         int *sx, int *sy, int *sw, int *sh) {
     int ax, ay, aw, ah;
@@ -1326,6 +1353,8 @@ static void draw_home_section(Drawable dst, GC g) {
                 continue;
             draw_tile_glyph(dst, g, t, sx, sy, sw, sh);
             draw_tile_label(dst, t, sx, sy, sh);
+            if (!is_drag && ti == hover_tile_idx)
+                draw_tile_hover_outline(dst, g, sx, sy, sw, sh);
         }
     }
 }
@@ -1677,6 +1706,7 @@ static void open_fonts(void) {
 }
 
 static void start_drag(int tile_idx, int px, int py) {
+    set_tile_hover(-1);
     dragging = 1;
     drag_tile_idx = tile_idx;
     drag_pointer_x = px;
@@ -1864,6 +1894,10 @@ int main(void) {
                 }
                 if (dragging)
                     update_drag(ev.xmotion.x, ev.xmotion.y);
+                else {
+                    int cy = ev.xmotion.y + scroll_y;
+                    set_tile_hover(tile_index_at_content(ev.xmotion.x, cy));
+                }
             } else if (ev.type == ButtonRelease && ev.xbutton.window == start_win &&
                        visible && ev.xbutton.button == Button1) {
                 if (dragging)
