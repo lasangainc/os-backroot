@@ -57,6 +57,7 @@
 #define INTRO_OUT_MS 550
 #define PAGE_TRANS_MS 420
 #define CARET_BLINK_MS 530
+#define LOADING_RESTART_SEC 30
 
 #define SETUP_SCRIPT "/usr/lib/backroot8/br8-oobe-setup.sh"
 #define FINISH_LOGIN_SCRIPT "/usr/lib/backroot8/br8-oobe-finish-login.sh"
@@ -121,6 +122,7 @@ static int next_hover;
 static int setup_pid;
 static double loading_anim;
 static int loading_only;
+static time_t loading_restart_at;
 static Pixmap thumb_pm[WALLPAPER_N];
 static int thumb_loaded[WALLPAPER_N];
 static int thumb_dw[WALLPAPER_N];
@@ -609,13 +611,15 @@ static void draw_loading(void) {
     int mw = text_width(font_header, main_text);
     int sw = text_width(font_sub, sub_text);
     int cy = win_h / 2;
+    int header_h = font_header ? font_header->height : 42;
+    int sub_h = font_sub ? font_sub->height : 22;
 
     xft_draw(canvas, (win_w - mw) / 2,
-        cy + text_baseline(font_header ? font_header->height : 42, font_header),
+        cy + text_baseline(header_h, font_header),
         main_text, COL_TEXT_R, COL_TEXT_G, COL_TEXT_B, font_header);
 
     xft_draw(canvas, (win_w - sw) / 2,
-        cy + (font_header ? font_header->height : 42) + 36,
+        cy + header_h + 36,
         sub_text, COL_MUTED_R, COL_MUTED_G, COL_MUTED_B, font_sub);
 
     int dots = ((int)(loading_anim * 2.0)) % 4;
@@ -624,8 +628,22 @@ static void draw_loading(void) {
         strcat(dotbuf, ".");
     int dw = text_width(font_sub, dotbuf);
     xft_draw(canvas, (win_w - dw) / 2,
-        cy + (font_header ? font_header->height : 42) + 72,
+        cy + header_h + 72,
         dotbuf, COL_MUTED_R, COL_MUTED_G, COL_MUTED_B, font_sub);
+
+    if (loading_restart_at > 0) {
+        int left = (int)(loading_restart_at - time(NULL));
+        if (left < 0)
+            left = 0;
+        char restart_msg[128];
+        snprintf(restart_msg, sizeof restart_msg,
+            "If your desktop does not appear, the system will restart in %d seconds.",
+            left);
+        int rw = text_width(font_sub, restart_msg);
+        xft_draw(canvas, (win_w - rw) / 2,
+            cy + header_h + sub_h + 108,
+            restart_msg, COL_MUTED_R, COL_MUTED_G, COL_MUTED_B, font_sub);
+    }
 }
 
 static void draw_phase(Phase p, int ox, double alpha) {
@@ -778,6 +796,7 @@ static void start_setup(void) {
 
     save_wallpaper_choice();
     phase = PHASE_LOADING;
+    loading_restart_at = time(NULL) + LOADING_RESTART_SEC;
     draw_all();
 
     char pass_file[128];
@@ -999,6 +1018,16 @@ static void clear_loading_state(void) {
     unlink(PANEL_READY);
 }
 
+static void schedule_desktop_restart(void) {
+    pid_t pid = fork();
+    if (pid == 0) {
+        execl("/usr/bin/systemd-run", "systemd-run", "--no-block", "--collect",
+            "/usr/bin/systemctl", "restart", "backroot8-desktop.service",
+            (char *)NULL);
+        _exit(127);
+    }
+}
+
 static int run_event_loop(int until_panel) {
     int xfd = ConnectionNumber(dpy);
     int running = 1;
@@ -1026,8 +1055,15 @@ static int run_event_loop(int until_panel) {
             running = 0;
             continue;
         }
+        if (until_panel && loading_restart_at > 0 && time(NULL) >= loading_restart_at) {
+            clear_loading_state();
+            schedule_desktop_restart();
+            running = 0;
+            continue;
+        }
         if (until_panel && time(NULL) - start > 120) {
             clear_loading_state();
+            schedule_desktop_restart();
             running = 0;
             continue;
         }
@@ -1118,6 +1154,7 @@ int main(int argc, char **argv) {
         if (open_display_window())
             return 1;
         phase = PHASE_LOADING;
+        loading_restart_at = time(NULL) + LOADING_RESTART_SEC;
         draw_all();
         run_event_loop(1);
         return 0;

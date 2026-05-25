@@ -29,10 +29,8 @@ fi
 /usr/share/backroot8/br8-panel-launcher.sh &
 PANEL_PID=$!
 
-# Start menu overlay (Home / Apps launcher) — defer until OOBE loading handoff
-if [ ! -f /run/br8-oobe/keep-loading ]; then
-    ( while true; do /usr/local/bin/br8-start; sleep 1; done ) &
-fi
+# Start menu overlay (Home / Apps launcher) — keep one long-lived instance
+/usr/local/bin/br8-start &
 
 # Live USB/ISO: install wizard (metro window)
 if /usr/lib/backroot8/is-live-boot.sh; then
@@ -53,7 +51,6 @@ if [ "$OOBE_LOADING" = 1 ]; then
         sleep 0.2
     done
     rm -f /run/br8-oobe/keep-loading
-    ( while true; do /usr/local/bin/br8-start; sleep 1; done ) &
 fi
 
 # Window manager (exec keeps the X session alive; OOBE loading overlay stays above until panel is up)

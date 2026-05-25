@@ -36,8 +36,6 @@
 #define WALLPAPER_DEFAULT "/usr/share/backgrounds/backroot8.jpg"
 #define USER_PIC "/usr/share/backroot8/default-user.png"
 #define USER_AVATAR_SZ 48
-#define CONFIG_DIR "/root/.config/backroot8"
-#define CONFIG_PATH CONFIG_DIR "/start_layout"
 #define OPEN_SLIDE_X 100
 #define OPEN_TILE_DUR_MS 170.0
 #define OPEN_TILE_STAGGER_MS 80.0
@@ -101,6 +99,7 @@ static int home_h;
 static int apps_cols;
 static Pixmap wallpaper_pm;
 static int wallpaper_ready;
+static char wallpaper_loaded_path[512];
 static Tile home_tiles[MAX_HOME_TILES];
 static int n_home_tiles;
 static int tile_order[MAX_HOME_TILES];
@@ -164,6 +163,8 @@ static void begin_close_animation(void);
 static int apps_section_visible(void);
 static void apply_menu_motion(double elapsed);
 static void load_wallpaper(void);
+static void load_user_picture(void);
+static const char *user_home_dir(void);
 static int user_avatar_target_x(void);
 static void layout_home(void);
 static void save_layout(void);
@@ -458,6 +459,8 @@ static void show_menu(void) {
     visible = 1;
     ctx_visible = 0;
     sync_start_win_size();
+    if (!user_pic_ready)
+        load_user_picture();
     load_wallpaper();
     XMapRaised(dpy, start_win);
     set_open(1);
@@ -674,14 +677,23 @@ static void reset_tile_order(void) {
         tile_order[i] = i;
 }
 
+static void config_layout_path(char *path, size_t path_sz) {
+    snprintf(path, path_sz, "%s/.config/backroot8/start_layout", user_home_dir());
+}
+
 static void ensure_config_dir(void) {
-    mkdir("/root/.config", 0755);
-    mkdir(CONFIG_DIR, 0755);
+    char dir[512];
+    snprintf(dir, sizeof(dir), "%s/.config", user_home_dir());
+    mkdir(dir, 0755);
+    snprintf(dir, sizeof(dir), "%s/.config/backroot8", user_home_dir());
+    mkdir(dir, 0755);
 }
 
 static void save_layout(void) {
+    char path[512];
     ensure_config_dir();
-    FILE *f = fopen(CONFIG_PATH, "w");
+    config_layout_path(path, sizeof path);
+    FILE *f = fopen(path, "w");
     if (!f)
         return;
     fprintf(f, "order=");
@@ -733,9 +745,11 @@ static void apply_order_list(const char *list) {
 }
 
 static void load_layout(void) {
+    char path[512];
     init_default_tiles();
     reset_tile_order();
-    FILE *f = fopen(CONFIG_PATH, "r");
+    config_layout_path(path, sizeof path);
+    FILE *f = fopen(path, "r");
     if (!f)
         return;
     char line[1024];
@@ -1260,13 +1274,15 @@ static void resolve_wallpaper_path(char *path, size_t path_sz) {
 }
 
 static void load_wallpaper(void) {
+    char wp_path[512];
+    resolve_wallpaper_path(wp_path, sizeof(wp_path));
+    if (wallpaper_ready && strcmp(wp_path, wallpaper_loaded_path) == 0)
+        return;
     if (wallpaper_pm) {
         XFreePixmap(dpy, wallpaper_pm);
         wallpaper_pm = 0;
     }
     wallpaper_ready = 0;
-    char wp_path[512];
-    resolve_wallpaper_path(wp_path, sizeof(wp_path));
     int iw = 0, ih = 0, comp = 0;
     unsigned char *data = stbi_load(wp_path, &iw, &ih, &comp, 3);
     if (!data || iw <= 0 || ih <= 0)
@@ -1278,6 +1294,10 @@ static void load_wallpaper(void) {
     wallpaper_pm = scale_image_to_pixmap(data, iw, ih, tw, th);
     stbi_image_free(data);
     wallpaper_ready = wallpaper_pm != 0;
+    if (wallpaper_ready)
+        snprintf(wallpaper_loaded_path, sizeof wallpaper_loaded_path, "%s", wp_path);
+    else
+        wallpaper_loaded_path[0] = '\0';
 }
 
 static void draw_bg(Drawable dst, GC g) {
@@ -1883,8 +1903,6 @@ int main(void) {
     XChangeWindowAttributes(dpy, start_win, CWOverrideRedirect | CWEventMask, &attr);
     gc = XCreateGC(dpy, start_win, 0, NULL);
     init_user_name();
-    load_wallpaper();
-    load_user_picture();
     clock_gettime(CLOCK_MONOTONIC, &last_tick);
     XUnmapWindow(dpy, start_win);
     visible = 0;
