@@ -36,11 +36,24 @@ menu.border.color: #4a4a58
 menu.border.width: 1
 menu.over.bg.color: #3a5a9a
 menu.over.text.color: #ffffff
+menu.active.bg.color: #3a5a9a
+menu.active.text.color: #ffffff
+menu.disabled.text.color: #808088
+menu.separator.color: #4a4a58
+menu.bullet.color: #e8e8ec
+menu.bullet.selected.color: #ffffff
+menu.bullet.unselected.color: #808088
 padding.width: 0
 padding.height: 0
 window.handle.width: 4
 window.client.padding.width: 0
 window.client.padding.height: 0
+title.vertical: false
+title.height: 24
+title.horizontal: true
+title.text: center
+titlebar.left:
+titlebar.right: CMX
 """
 (theme / "themerc").write_text(themerc)
 
