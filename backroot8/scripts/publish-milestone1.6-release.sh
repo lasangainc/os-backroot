@@ -35,9 +35,9 @@ if ! "$ROOT/scripts/verify-iso-boot.sh"; then
     exit 1
 fi
 
-STAGING="$(mktemp -d)"
-cp "$ISO" "$STAGING/$ASSET_NAME"
-chown "${SUDO_USER:-root}:${SUDO_USER:-root}" "$STAGING/$ASSET_NAME" 2>/dev/null || true
+UPLOAD_ISO="/tmp/$ASSET_NAME"
+cp "$ISO" "$UPLOAD_ISO"
+chown "${SUDO_USER:-root}:${SUDO_USER:-root}" "$UPLOAD_ISO" 2>/dev/null || true
 
 NOTES="$ROOT/RELEASE-v8-milestone1.6-notes.md"
 if [[ ! -f "$NOTES" ]]; then
@@ -55,11 +55,11 @@ fi
 
 log "Uploading $ASSET_NAME to $RELEASE_TAG..."
 sudo -u "${SUDO_USER:-root}" gh release upload "$RELEASE_TAG" \
-    "$STAGING/$ASSET_NAME" \
+    "$UPLOAD_ISO" \
     --repo "$REPO" \
     --clobber
 
-rm -rf "$STAGING"
+rm -f "$UPLOAD_ISO"
 
 log "Marking Milestone 1.5 as DEFECTIVE..."
 if sudo -u "${SUDO_USER:-root}" gh release view v8-milestone1.5 --repo "$REPO" &>/dev/null; then
