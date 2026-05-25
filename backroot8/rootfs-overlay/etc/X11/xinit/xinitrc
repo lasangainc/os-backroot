@@ -37,9 +37,11 @@ if /usr/lib/backroot8/is-live-boot.sh; then
     /usr/local/bin/br8-install &
 fi
 
-# First boot after install: OOBE (fullscreen metro)
-if [ -f /etc/backroot8/oobe-pending ] && ! /usr/lib/backroot8/is-live-boot.sh; then
-    /usr/local/bin/br8-oobe &
+# First boot after install, or live debug: OOBE (fullscreen metro)
+if [ -f /etc/backroot8/oobe-pending ]; then
+    if [ -f /etc/backroot8/oobe-debug ] || ! /usr/lib/backroot8/is-live-boot.sh; then
+        /usr/local/bin/br8-oobe &
+    fi
 fi
 
 /usr/lib/backroot8/br8-plymouth-quit.sh &

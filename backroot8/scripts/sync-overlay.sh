@@ -99,6 +99,8 @@ mkdir -p "$DEST/root/.config/neofetch"
 install -Dm644 "$ROOT/rootfs-overlay/etc/neofetch/config.conf" \
     "$DEST/root/.config/neofetch/config.conf"
 install -Dm755 "$ROOT/rootfs-overlay/usr/local/bin/neofetch" "$DEST/usr/local/bin/neofetch"
+install -Dm755 "$ROOT/rootfs-overlay/usr/local/bin/trigger-oobe-debug" \
+    "$DEST/usr/local/bin/trigger-oobe-debug"
 install -Dm644 "$ROOT/rootfs-overlay/etc/motd" "$DEST/etc/motd"
 install -Dm644 "$ROOT/rootfs-overlay/etc/systemd/system/backroot8-desktop.service" \
     "$DEST/etc/systemd/system/backroot8-desktop.service"

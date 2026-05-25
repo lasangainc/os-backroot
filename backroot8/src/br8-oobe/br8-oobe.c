@@ -58,6 +58,7 @@
 #define PAGE_TRANS_MS 420
 #define CARET_BLINK_MS 530
 #define LOADING_STATUS "/run/br8-oobe/loading-status"
+#define OOBE_DEBUG "/etc/backroot8/oobe-debug"
 
 #define SETUP_SCRIPT "/usr/lib/backroot8/br8-oobe-setup.sh"
 #define KEEP_LOADING "/run/br8-oobe/keep-loading"
@@ -294,6 +295,10 @@ static void open_fonts(void) {
 
 static int oobe_pending(void) {
     return access("/etc/backroot8/oobe-pending", F_OK) == 0;
+}
+
+static int oobe_debug_live(void) {
+    return access(OOBE_DEBUG, F_OK) == 0;
 }
 
 static int is_live_boot(void) {
@@ -1133,7 +1138,9 @@ int main(int argc, char **argv) {
         return 0;
     }
 
-    if (is_live_boot() || !oobe_pending())
+    if (!oobe_pending())
+        return 0;
+    if (is_live_boot() && !oobe_debug_live())
         return 0;
 
     if (open_display_window())

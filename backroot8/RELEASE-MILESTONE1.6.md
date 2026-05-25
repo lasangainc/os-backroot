@@ -4,11 +4,11 @@ Bootable hybrid live ISO for BIOS and UEFI systems. Replaces **Milestone 1.5** (
 
 ## Download
 
-**[GitHub Release v8-milestone1.6v2](https://github.com/lasangainc/os-backroot/releases/tag/v8-milestone1.6v2)** — asset `backroot8-milestone1.6v2.iso` (current).
+**[GitHub Release v8-milestone1.6v3](https://github.com/lasangainc/os-backroot/releases/tag/v8-milestone1.6v3)** — asset `backroot8-milestone1.6v3.iso` (current).
 
-Previous: [v8-milestone1.6](https://github.com/lasangainc/os-backroot/releases/tag/v8-milestone1.6) — `backroot8-milestone1.6.iso`
+Previous: [v8-milestone1.6v2](https://github.com/lasangainc/os-backroot/releases/tag/v8-milestone1.6v2), [v8-milestone1.6](https://github.com/lasangainc/os-backroot/releases/tag/v8-milestone1.6)
 
-> **Milestone 1.5 is defective.** Use **1.6v2** or [Milestone 1](https://github.com/lasangainc/os-backroot/releases/tag/v8-milestone1) instead.
+> **Milestone 1.5 is defective.** Use **1.6v3** or [Milestone 1](https://github.com/lasangainc/os-backroot/releases/tag/v8-milestone1) instead.
 
 ## Fixes in 1.6 / 1.6v2
 
@@ -18,10 +18,14 @@ Previous: [v8-milestone1.6](https://github.com/lasangainc/os-backroot/releases/t
 - Post-setup loading screen dismisses when the taskbar is ready (no metro/start-menu race)
 - No automatic terminal window on login
 
-### 1.6v2 only
+### 1.6v2
 
 - Start menu opens quickly (single `br8-start`, lazy wallpaper)
-- OOBE loading: 30s restart countdown if desktop does not appear
+
+### 1.6v3 only
+
+- OOBE loading runs account setup and desktop restart in the background
+- `trigger-oobe-debug` on live ISO to test OOBE without installing
 
 ## Build
 
@@ -29,13 +33,21 @@ Previous: [v8-milestone1.6](https://github.com/lasangainc/os-backroot/releases/t
 cd backroot8
 sudo ./scripts/install-iso-build-deps.sh
 sudo ./scripts/build-root.sh
-BACKROOT8_VERSION=8-milestone1.6v2 sudo ./scripts/build-iso.sh
+BACKROOT8_VERSION=8-milestone1.6v3 sudo ./scripts/build-iso.sh
 ```
 
 Writes `vm/backroot8-live.iso`. Publish:
 
 ```bash
-sudo ./scripts/publish-milestone1.6v2-release.sh
+sudo ./scripts/publish-milestone1.6v3-release.sh
+```
+
+### Live OOBE debug
+
+On a running live session:
+
+```bash
+sudo trigger-oobe-debug
 ```
 
 ## Test in QEMU
