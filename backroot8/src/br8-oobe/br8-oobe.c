@@ -100,7 +100,8 @@ static GC gc;
 static Visual *visual;
 static Colormap cmap;
 static int win_w, win_h;
-static XftFont *font_header, *font_sub, *font_label, *font_field, *font_btn;
+static XftFont *font_header, *font_intro, *font_sub, *font_label, *font_field, *font_btn;
+static char account_error[96];
 static Phase phase = PHASE_INTRO;
 static AnimState anim = ANIM_INTRO_IN;
 static Phase page_from = PHASE_PERSONALIZE;
@@ -251,9 +252,15 @@ static XftFont *open_font(const char *const *names) {
 
 static void open_fonts(void) {
     static const char *const header_names[] = {
-        "Segoe UI Light-42:antialias=true",
-        "Segoe UI-36:antialias=true",
-        "DejaVu Sans-36",
+        "Segoe UI Light-32:antialias=true",
+        "Segoe UI-28:antialias=true",
+        "DejaVu Sans-28",
+        NULL
+    };
+    static const char *const intro_names[] = {
+        "Segoe UI Light-28:antialias=true",
+        "Segoe UI-24:antialias=true",
+        "DejaVu Sans-24",
         NULL
     };
     static const char *const sub_names[] = {
@@ -278,6 +285,7 @@ static void open_fonts(void) {
         NULL
     };
     font_header = open_font(header_names);
+    font_intro = open_font(intro_names);
     font_sub = open_font(sub_names);
     font_label = open_font(label_names);
     font_field = open_font(field_names);
@@ -487,22 +495,23 @@ static void draw_intro(int ox, double alpha) {
     const char *pers = "Personalize";
     const char *sign = "Sign in";
     int sub_h = font_sub ? font_sub->height : 22;
-    int hdr_h = font_header ? font_header->height : 48;
+    XftFont *intro_font = font_intro ? font_intro : font_sub;
+    int intro_h = intro_font ? intro_font->height : 28;
 
     xft_draw_alpha(canvas, PAD + ox, PAD + text_baseline(sub_h, font_sub),
         header, COL_MUTED_R, COL_MUTED_G, COL_MUTED_B, font_sub, alpha);
 
     int mid_y = win_h / 2;
-    int pers_w = text_width(font_header, pers);
-    int sign_w = text_width(font_header, sign);
+    int pers_w = text_width(intro_font, pers);
+    int sign_w = text_width(intro_font, sign);
     int pers_x = win_w / 4 - pers_w / 2 + ox;
     int sign_x = (win_w * 3) / 4 - sign_w / 2 + ox;
-    int label_y = mid_y + text_baseline(hdr_h, font_header);
+    int label_y = mid_y + text_baseline(intro_h, intro_font);
 
     xft_draw_alpha(canvas, pers_x, label_y, pers,
-        COL_TEXT_R, COL_TEXT_G, COL_TEXT_B, font_header, alpha);
+        COL_TEXT_R, COL_TEXT_G, COL_TEXT_B, intro_font, alpha);
     xft_draw_alpha(canvas, sign_x, label_y, sign,
-        COL_TEXT_R, COL_TEXT_G, COL_TEXT_B, font_header, alpha);
+        COL_TEXT_R, COL_TEXT_G, COL_TEXT_B, intro_font, alpha);
 }
 
 static void draw_personalize(int ox, double alpha) {
@@ -586,6 +595,11 @@ static void draw_account(int ox, double alpha) {
     draw_field_box(PAD + LABEL_W + ox, row_pass2, password2, NULL, 1, focus == FOCUS_PASS2);
 
     draw_finish_btn(btn_x + ox, btn_y, "Finish", finish_hover, alpha);
+    if (account_error[0]) {
+        int err_y = btn_y - 28;
+        xft_draw_alpha(canvas, PAD + ox, err_y, account_error,
+            255, 180, 120, font_sub, alpha);
+    }
 }
 
 static void draw_loading(void) {
@@ -741,17 +755,26 @@ static int valid_username(const char *s) {
     return 1;
 }
 
-static int passwords_ok(void) {
-    if (strcmp(password, password2) != 0)
+static int account_ready(char *err, size_t errsz) {
+    if (!valid_username(username)) {
+        snprintf(err, errsz, "Enter a user name (letters, numbers, _ or -).");
         return 0;
-    if (!password[0])
-        return 1;
-    return strlen(password) >= 4;
+    }
+    if (password[0] && strcmp(password, password2) != 0) {
+        snprintf(err, errsz, "Passwords do not match.");
+        return 0;
+    }
+    return 1;
 }
 
 static void start_setup(void) {
-    if (!valid_username(username) || !passwords_ok())
+    char err[96];
+    if (!account_ready(err, sizeof err)) {
+        snprintf(account_error, sizeof account_error, "%s", err);
+        draw_all();
         return;
+    }
+    account_error[0] = '\0';
 
     save_wallpaper_choice();
     phase = PHASE_LOADING;
@@ -834,6 +857,7 @@ static void handle_key(XKeyEvent *kev) {
     if (phase != PHASE_ACCOUNT)
         return;
 
+    account_error[0] = '\0';
     char *field = active_field();
     if (!field)
         return;
@@ -885,6 +909,7 @@ static void handle_click(int x, int y) {
     if (phase != PHASE_ACCOUNT)
         return;
 
+    account_error[0] = '\0';
     int title_y, row_user, row_pass, row_pass2, btn_x, btn_y;
     account_layout(&title_y, &row_user, &row_pass, &row_pass2, &btn_x, &btn_y);
     (void)title_y;
@@ -952,22 +977,6 @@ static void finish_login(void) {
     }
 }
 
-static int root_cardinal(const char *name) {
-    Atom atom = XInternAtom(dpy, name, False);
-    Atom actual;
-    int fmt;
-    unsigned long n, bytes;
-    unsigned long *data = NULL;
-    int v = 0;
-    if (XGetWindowProperty(dpy, root, atom, 0, 8, False, XA_CARDINAL,
-            &actual, &fmt, &n, &bytes, (unsigned char **)&data) == Success &&
-        data && n > 0)
-        v = data[0] ? 1 : 0;
-    if (data)
-        XFree(data);
-    return v;
-}
-
 static void clear_metro_active(void) {
     Atom atom = XInternAtom(dpy, "_BR8_METRO_ACTIVE", False);
     unsigned long v = 0;
@@ -981,7 +990,7 @@ static int panel_is_ready(void) {
 }
 
 static int loading_handoff_done(void) {
-    return panel_is_ready() && !root_cardinal("_BR8_METRO_ACTIVE");
+    return panel_is_ready();
 }
 
 static void clear_loading_state(void) {
@@ -1028,8 +1037,16 @@ static int run_event_loop(int until_panel) {
             if (waitpid(setup_pid, &st, WNOHANG) > 0) {
                 setup_pid = 0;
                 unlink("/run/br8-oobe/pass");
-                finish_login();
-                running = 0;
+                if (WIFEXITED(st) && WEXITSTATUS(st) == 0) {
+                    finish_login();
+                    running = 0;
+                } else {
+                    snprintf(account_error, sizeof account_error,
+                        "Could not create your account. Try again.");
+                    phase = PHASE_ACCOUNT;
+                    input_blocked = 0;
+                    draw_all();
+                }
             }
         }
 
