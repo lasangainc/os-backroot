@@ -57,10 +57,9 @@
 #define INTRO_OUT_MS 550
 #define PAGE_TRANS_MS 420
 #define CARET_BLINK_MS 530
-#define LOADING_RESTART_SEC 30
+#define LOADING_STATUS "/run/br8-oobe/loading-status"
 
 #define SETUP_SCRIPT "/usr/lib/backroot8/br8-oobe-setup.sh"
-#define FINISH_LOGIN_SCRIPT "/usr/lib/backroot8/br8-oobe-finish-login.sh"
 #define KEEP_LOADING "/run/br8-oobe/keep-loading"
 #define PANEL_READY "/run/br8-oobe/panel-ready"
 #define WALLPAPER_CHOICE "/run/br8-oobe/wallpaper"
@@ -122,7 +121,6 @@ static int next_hover;
 static int setup_pid;
 static double loading_anim;
 static int loading_only;
-static time_t loading_restart_at;
 static Pixmap thumb_pm[WALLPAPER_N];
 static int thumb_loaded[WALLPAPER_N];
 static int thumb_dw[WALLPAPER_N];
@@ -604,15 +602,30 @@ static void draw_account(int ox, double alpha) {
     }
 }
 
+static const char *loading_subtitle(void) {
+    static char buf[128];
+    FILE *fp = fopen(LOADING_STATUS, "r");
+    if (!fp)
+        return "This can take a while... But it will be worth it!";
+    if (!fgets(buf, sizeof buf, fp)) {
+        fclose(fp);
+        return "This can take a while... But it will be worth it!";
+    }
+    fclose(fp);
+    size_t n = strlen(buf);
+    while (n > 0 && (buf[n - 1] == '\n' || buf[n - 1] == '\r'))
+        buf[--n] = '\0';
+    return buf[0] ? buf : "This can take a while... But it will be worth it!";
+}
+
 static void draw_loading(void) {
     const char *main_text = "We are setting your computer up.";
-    const char *sub_text = "This can take a while... But it will be worth it!";
+    const char *sub_text = loading_subtitle();
 
     int mw = text_width(font_header, main_text);
     int sw = text_width(font_sub, sub_text);
     int cy = win_h / 2;
     int header_h = font_header ? font_header->height : 42;
-    int sub_h = font_sub ? font_sub->height : 22;
 
     xft_draw(canvas, (win_w - mw) / 2,
         cy + text_baseline(header_h, font_header),
@@ -630,20 +643,6 @@ static void draw_loading(void) {
     xft_draw(canvas, (win_w - dw) / 2,
         cy + header_h + 72,
         dotbuf, COL_MUTED_R, COL_MUTED_G, COL_MUTED_B, font_sub);
-
-    if (loading_restart_at > 0) {
-        int left = (int)(loading_restart_at - time(NULL));
-        if (left < 0)
-            left = 0;
-        char restart_msg[128];
-        snprintf(restart_msg, sizeof restart_msg,
-            "If your desktop does not appear, the system will restart in %d seconds.",
-            left);
-        int rw = text_width(font_sub, restart_msg);
-        xft_draw(canvas, (win_w - rw) / 2,
-            cy + header_h + sub_h + 108,
-            restart_msg, COL_MUTED_R, COL_MUTED_G, COL_MUTED_B, font_sub);
-    }
 }
 
 static void draw_phase(Phase p, int ox, double alpha) {
@@ -796,7 +795,6 @@ static void start_setup(void) {
 
     save_wallpaper_choice();
     phase = PHASE_LOADING;
-    loading_restart_at = time(NULL) + LOADING_RESTART_SEC;
     draw_all();
 
     char pass_file[128];
@@ -986,16 +984,6 @@ static void resize_window(int w, int h) {
     draw_all();
 }
 
-static void finish_login(void) {
-    if (access(FINISH_LOGIN_SCRIPT, X_OK) == 0) {
-        pid_t pid = fork();
-        if (pid == 0) {
-            execl(FINISH_LOGIN_SCRIPT, FINISH_LOGIN_SCRIPT, (char *)NULL);
-            _exit(127);
-        }
-    }
-}
-
 static void clear_metro_active(void) {
     Atom atom = XInternAtom(dpy, "_BR8_METRO_ACTIVE", False);
     unsigned long v = 0;
@@ -1016,16 +1004,6 @@ static void clear_loading_state(void) {
     clear_metro_active();
     unlink(KEEP_LOADING);
     unlink(PANEL_READY);
-}
-
-static void schedule_desktop_restart(void) {
-    pid_t pid = fork();
-    if (pid == 0) {
-        execl("/usr/bin/systemd-run", "systemd-run", "--no-block", "--collect",
-            "/usr/bin/systemctl", "restart", "backroot8-desktop.service",
-            (char *)NULL);
-        _exit(127);
-    }
 }
 
 static int run_event_loop(int until_panel) {
@@ -1052,18 +1030,13 @@ static int run_event_loop(int until_panel) {
 
         if (until_panel && loading_handoff_done()) {
             clear_loading_state();
-            running = 0;
-            continue;
-        }
-        if (until_panel && loading_restart_at > 0 && time(NULL) >= loading_restart_at) {
-            clear_loading_state();
-            schedule_desktop_restart();
+            unlink(LOADING_STATUS);
             running = 0;
             continue;
         }
         if (until_panel && time(NULL) - start > 120) {
             clear_loading_state();
-            schedule_desktop_restart();
+            unlink(LOADING_STATUS);
             running = 0;
             continue;
         }
@@ -1074,8 +1047,9 @@ static int run_event_loop(int until_panel) {
                 setup_pid = 0;
                 unlink("/run/br8-oobe/pass");
                 if (WIFEXITED(st) && WEXITSTATUS(st) == 0) {
-                    finish_login();
-                    running = 0;
+                    /* setup.sh restarts the desktop; keep splash until handoff */
+                    phase = PHASE_LOADING;
+                    draw_all();
                 } else {
                     snprintf(account_error, sizeof account_error,
                         "Could not create your account. Try again.");
@@ -1154,7 +1128,6 @@ int main(int argc, char **argv) {
         if (open_display_window())
             return 1;
         phase = PHASE_LOADING;
-        loading_restart_at = time(NULL) + LOADING_RESTART_SEC;
         draw_all();
         run_event_loop(1);
         return 0;

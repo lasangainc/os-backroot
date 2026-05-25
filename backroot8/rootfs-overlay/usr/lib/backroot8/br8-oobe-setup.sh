@@ -11,6 +11,12 @@ PASS_FILE="${2:-}"
 mkdir -p /run/br8-oobe
 chmod 1777 /run/br8-oobe
 
+loading_status() {
+    printf '%s\n' "$1" > /run/br8-oobe/loading-status
+}
+
+loading_status "Creating your account..."
+
 if ! id "$USER_NAME" &>/dev/null; then
     useradd -m -G wheel,audio,video,storage -s /bin/bash "$USER_NAME"
 fi
@@ -38,6 +44,8 @@ if [[ -r "$WP_SRC" ]]; then
 fi
 chown -R "$USER_NAME:$USER_NAME" "/home/$USER_NAME"
 
+loading_status "Signing you in..."
+
 mkdir -p /etc/backroot8
 echo "$USER_NAME" > /etc/backroot8/desktop-user
 chmod 644 /etc/backroot8/desktop-user
@@ -64,3 +72,8 @@ touch /run/br8-oobe/keep-loading
 
 rm -f /etc/backroot8/oobe-pending
 touch /etc/backroot8/oobe-complete
+
+loading_status "Starting your desktop..."
+# Restart as the new user (outside desktop service cgroup).
+systemd-run --no-block --collect \
+    /usr/bin/systemctl restart backroot8-desktop.service
