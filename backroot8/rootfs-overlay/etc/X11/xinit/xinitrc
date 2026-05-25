@@ -19,6 +19,17 @@ if [ "$OOBE_LOADING" = 0 ]; then
     xsetroot -solid black
 fi
 
+# Lock screen when the session user has a password (skip OOBE / loading handoff)
+NEEDS_LOCK=0
+if [ "$OOBE_LOADING" = 0 ] && [ ! -f /etc/backroot8/oobe-pending ]; then
+    if /usr/lib/backroot8/br8-has-password.sh; then
+        NEEDS_LOCK=1
+    fi
+fi
+if [ "$NEEDS_LOCK" = 1 ] && [ -x /usr/local/bin/br8-lock ]; then
+    /usr/local/bin/br8-lock
+fi
+
 if command -v feh >/dev/null && [ -r "$WALLPAPER" ]; then
     feh --bg-fill "$WALLPAPER" &
 else

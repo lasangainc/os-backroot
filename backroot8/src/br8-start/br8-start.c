@@ -36,8 +36,10 @@
 #define WALLPAPER_DEFAULT "/usr/share/backgrounds/backroot8.jpg"
 #define USER_PIC "/usr/share/backroot8/default-user.png"
 #define USER_AVATAR_SZ 48
-#define CONFIG_DIR "/root/.config/backroot8"
-#define CONFIG_PATH CONFIG_DIR "/start_layout"
+#define CONFIG_PATH_SUFFIX "/.config/backroot8/start_layout"
+#define USER_MENU_W 200
+#define USER_MENU_ROW_H 40
+#define SHOW_START_FLAG "/run/br8-lock/show-start"
 #define OPEN_SLIDE_X 100
 #define OPEN_TILE_DUR_MS 170.0
 #define OPEN_TILE_STAGGER_MS 80.0
@@ -156,7 +158,11 @@ static int ctx_visible;
 static int ctx_x, ctx_y;
 static int ctx_app_idx;
 static int ctx_is_tile;
+static int user_menu_visible;
+static int user_menu_hover;
+static char config_path[512];
 
+static const char *user_home_dir(void);
 static void draw_all(void);
 static void mark_dirty(void);
 static void finish_hide(void);
@@ -383,6 +389,7 @@ static void finish_hide(void) {
     dragging = 0;
     drag_tile_idx = -1;
     ctx_visible = 0;
+    user_menu_visible = 0;
     hover_tile_idx = -1;
     open_anim = 0.0;
     layout_animating = 0;
@@ -401,6 +408,7 @@ static void begin_close_animation(void) {
     dragging = 0;
     drag_tile_idx = -1;
     ctx_visible = 0;
+    user_menu_visible = 0;
     layout_animating = 0;
     open_anim = 1.0;
     clock_gettime(CLOCK_MONOTONIC, &close_anim_start);
@@ -457,6 +465,7 @@ static void show_menu(void) {
     }
     visible = 1;
     ctx_visible = 0;
+    user_menu_visible = 0;
     sync_start_win_size();
     load_wallpaper();
     XMapRaised(dpy, start_win);
@@ -471,7 +480,7 @@ static void spawn_terminal(void) {
         return;
     if (chdir("/") != 0)
         _exit(1);
-    setenv("HOME", "/root", 1);
+    setenv("HOME", user_home_dir(), 1);
     setenv("DISPLAY", ":0", 1);
     setenv("TERM", "xterm-256color", 1);
     execl("/usr/bin/xterm", "xterm",
@@ -491,7 +500,7 @@ static void spawn_dolphin(void) {
         return;
     if (chdir("/") != 0)
         _exit(1);
-    setenv("HOME", "/root", 1);
+    setenv("HOME", user_home_dir(), 1);
     setenv("DISPLAY", ":0", 1);
     execl("/usr/bin/pcmanfm", "pcmanfm", "/", NULL);
     _exit(1);
@@ -501,7 +510,7 @@ static void spawn_settings(void) {
     pid_t pid = fork();
     if (pid != 0)
         return;
-    setenv("HOME", "/root", 1);
+    setenv("HOME", user_home_dir(), 1);
     setenv("DISPLAY", ":0", 1);
     execl("/usr/local/bin/br8-settings", "br8-settings", NULL);
     _exit(1);
@@ -513,7 +522,7 @@ static void spawn_exec(const char *cmd) {
     pid_t pid = fork();
     if (pid != 0)
         return;
-    setenv("HOME", "/root", 1);
+    setenv("HOME", user_home_dir(), 1);
     setenv("DISPLAY", ":0", 1);
     execl("/bin/sh", "sh", "-c", cmd, NULL);
     _exit(1);
@@ -674,14 +683,22 @@ static void reset_tile_order(void) {
         tile_order[i] = i;
 }
 
+static void init_config_path(void) {
+    snprintf(config_path, sizeof config_path, "%s%s",
+        user_home_dir(), CONFIG_PATH_SUFFIX);
+}
+
 static void ensure_config_dir(void) {
-    mkdir("/root/.config", 0755);
-    mkdir(CONFIG_DIR, 0755);
+    char dir[512];
+    snprintf(dir, sizeof dir, "%s/.config", user_home_dir());
+    mkdir(dir, 0755);
+    snprintf(dir, sizeof dir, "%s/.config/backroot8", user_home_dir());
+    mkdir(dir, 0755);
 }
 
 static void save_layout(void) {
     ensure_config_dir();
-    FILE *f = fopen(CONFIG_PATH, "w");
+    FILE *f = fopen(config_path, "w");
     if (!f)
         return;
     fprintf(f, "order=");
@@ -735,7 +752,7 @@ static void apply_order_list(const char *list) {
 static void load_layout(void) {
     init_default_tiles();
     reset_tile_order();
-    FILE *f = fopen(CONFIG_PATH, "r");
+    FILE *f = fopen(config_path, "r");
     if (!f)
         return;
     char line[1024];
@@ -1238,6 +1255,86 @@ static void draw_user_header(Drawable dst, GC g) {
         xft_draw(dst, ui_font, nx, ny, user_display_name, 255, 255, 255);
 }
 
+static void user_menu_rect(int *mx, int *my) {
+    int ax = user_avatar_target_x();
+    *mx = ax + USER_AVATAR_SZ - USER_MENU_W;
+    *my = user_avatar_y() + USER_AVATAR_SZ + 8;
+    if (*mx < MARGIN)
+        *mx = MARGIN;
+}
+
+static int user_avatar_hit(int x, int y) {
+    if (!visible || open_anim < 0.85)
+        return 0;
+    int ax = user_avatar_x;
+    int ay = user_avatar_y();
+    return x >= ax && x < ax + USER_AVATAR_SZ && y >= ay && y < ay + USER_AVATAR_SZ;
+}
+
+static int user_menu_hit(int x, int y) {
+    if (!user_menu_visible)
+        return 0;
+    int mx, my;
+    user_menu_rect(&mx, &my);
+    return x >= mx && x < mx + USER_MENU_W &&
+        y >= my && y < my + USER_MENU_ROW_H * 2;
+}
+
+static int user_menu_row_at(int x, int y) {
+    if (!user_menu_hit(x, y))
+        return -1;
+    int mx, my;
+    user_menu_rect(&mx, &my);
+    return (y - my) / USER_MENU_ROW_H;
+}
+
+static void draw_user_menu(Drawable dst, GC g) {
+    if (!user_menu_visible)
+        return;
+    int mx, my;
+    user_menu_rect(&mx, &my);
+    int mh = USER_MENU_ROW_H * 2;
+    XSetForeground(dpy, g, pix_ctx_bg);
+    XFillRectangle(dpy, dst, g, mx, my, USER_MENU_W, mh);
+    XSetForeground(dpy, g, pix_ctx_border);
+    XDrawRectangle(dpy, dst, g, mx, my, USER_MENU_W - 1, mh - 1);
+
+    const char *labels[2] = { "Shut down", "Log out" };
+    for (int row = 0; row < 2; row++) {
+        if (row == user_menu_hover) {
+            XSetForeground(dpy, g, rgb(70, 110, 170));
+            XFillRectangle(dpy, dst, g, mx + 1, my + row * USER_MENU_ROW_H + 1,
+                USER_MENU_W - 2, USER_MENU_ROW_H - 2);
+        }
+        xft_draw(dst, ui_font, mx + 12,
+            my + row * USER_MENU_ROW_H + text_baseline(USER_MENU_ROW_H, ui_font),
+            labels[row], 255, 255, 255);
+    }
+}
+
+static void do_shutdown(void) {
+    user_menu_visible = 0;
+    begin_close_animation();
+    pid_t pid = fork();
+    if (pid != 0)
+        return;
+    setsid();
+    execl("/usr/bin/sudo", "sudo", "/usr/bin/systemctl", "poweroff", NULL);
+    execl("/usr/bin/systemctl", "systemctl", "poweroff", NULL);
+    _exit(1);
+}
+
+static void do_logout(void) {
+    user_menu_visible = 0;
+    begin_close_animation();
+    pid_t pid = fork();
+    if (pid != 0)
+        return;
+    setsid();
+    execl("/usr/lib/backroot8/br8-logout.sh", "br8-logout.sh", NULL);
+    _exit(1);
+}
+
 static const char *user_home_dir(void) {
     const char *home = getenv("HOME");
     struct passwd *pw = getpwuid(getuid());
@@ -1534,10 +1631,12 @@ static void draw_all(void) {
         clear_home_region(buf_pm, buf_gc);
         draw_home_section(buf_pm, buf_gc);
         draw_context_menu(buf_pm, buf_gc);
+        draw_user_menu(buf_pm, buf_gc);
     } else {
         XCopyArea(dpy, static_pm, buf_pm, buf_gc, 0, 0, win_w, win_h, 0, 0);
         draw_home_section(buf_pm, buf_gc);
         draw_context_menu(buf_pm, buf_gc);
+        draw_user_menu(buf_pm, buf_gc);
         if (!dragging && !layout_animating && !menu_closing && open_anim >= 1.0) {
             home_header_x = HOME_HEADER_REST_X;
             user_avatar_x = user_avatar_target_x();
@@ -1685,10 +1784,30 @@ static int ctx_menu_hit(int x, int y) {
 }
 
 static void handle_click(int x, int y) {
+    if (user_menu_visible) {
+        int row = user_menu_row_at(x, y);
+        user_menu_visible = 0;
+        if (row == 0)
+            do_shutdown();
+        else if (row == 1)
+            do_logout();
+        else
+            draw_all();
+        if (row >= 0)
+            return;
+    }
+
     if (ctx_visible) {
         if (ctx_menu_hit(x, y) && ctx_app_idx >= 0 && !ctx_is_tile) {
             pin_app(ctx_app_idx);
         }
+        ctx_visible = 0;
+        draw_all();
+        return;
+    }
+
+    if (user_avatar_hit(x, y)) {
+        user_menu_visible = !user_menu_visible;
         ctx_visible = 0;
         draw_all();
         return;
@@ -1866,6 +1985,7 @@ int main(void) {
 
     open_fonts();
     init_palette();
+    init_config_path();
     load_apps();
     load_layout();
 
@@ -1890,6 +2010,11 @@ int main(void) {
     visible = 0;
 
     XSelectInput(dpy, root, PropertyChangeMask | StructureNotifyMask);
+
+    if (access(SHOW_START_FLAG, F_OK) == 0) {
+        unlink(SHOW_START_FLAG);
+        show_menu();
+    }
 
     int xfd = ConnectionNumber(dpy);
     while (1) {
@@ -1961,7 +2086,13 @@ int main(void) {
                 }
                 if (dragging)
                     update_drag(ev.xmotion.x, ev.xmotion.y);
-                else {
+                else if (user_menu_visible) {
+                    int row = user_menu_row_at(ev.xmotion.x, ev.xmotion.y);
+                    if (row != user_menu_hover) {
+                        user_menu_hover = row;
+                        mark_dirty();
+                    }
+                } else {
                     int cy = ev.xmotion.y + scroll_y;
                     set_tile_hover(tile_index_at_content(ev.xmotion.x, cy));
                 }
@@ -1984,6 +2115,9 @@ int main(void) {
                 if (sym == XK_Escape) {
                     if (ctx_visible) {
                         ctx_visible = 0;
+                        draw_all();
+                    } else if (user_menu_visible) {
+                        user_menu_visible = 0;
                         draw_all();
                     } else {
                         begin_close_animation();
