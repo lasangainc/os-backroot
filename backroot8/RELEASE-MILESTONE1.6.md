@@ -4,11 +4,13 @@ Bootable hybrid live ISO for BIOS and UEFI systems. Replaces **Milestone 1.5** (
 
 ## Download
 
-**[GitHub Release v8-milestone1.6](https://github.com/lasangainc/os-backroot/releases/tag/v8-milestone1.6)** — asset `backroot8-milestone1.6.iso`.
+**[GitHub Release v8-milestone1.6v2](https://github.com/lasangainc/os-backroot/releases/tag/v8-milestone1.6v2)** — asset `backroot8-milestone1.6v2.iso` (current).
 
-> **Milestone 1.5 is defective.** Use 1.6 or [Milestone 1](https://github.com/lasangainc/os-backroot/releases/tag/v8-milestone1) instead.
+Previous: [v8-milestone1.6](https://github.com/lasangainc/os-backroot/releases/tag/v8-milestone1.6) — `backroot8-milestone1.6.iso`
 
-## Fixes in 1.6
+> **Milestone 1.5 is defective.** Use **1.6v2** or [Milestone 1](https://github.com/lasangainc/os-backroot/releases/tag/v8-milestone1) instead.
+
+## Fixes in 1.6 / 1.6v2
 
 - Installer progress checkmarks render correctly (vector checkmarks, not missing UTF-8 glyphs)
 - OOBE intro screen: “Personalize” / “Sign in” sized to fit on screen
@@ -16,19 +18,24 @@ Bootable hybrid live ISO for BIOS and UEFI systems. Replaces **Milestone 1.5** (
 - Post-setup loading screen dismisses when the taskbar is ready (no metro/start-menu race)
 - No automatic terminal window on login
 
+### 1.6v2 only
+
+- Start menu opens quickly (single `br8-start`, lazy wallpaper)
+- OOBE loading: 30s restart countdown if desktop does not appear
+
 ## Build
 
 ```bash
 cd backroot8
 sudo ./scripts/install-iso-build-deps.sh
 sudo ./scripts/build-root.sh
-BACKROOT8_VERSION=8-milestone1.6 sudo ./scripts/build-iso.sh
+BACKROOT8_VERSION=8-milestone1.6v2 sudo ./scripts/build-iso.sh
 ```
 
 Writes `vm/backroot8-live.iso`. Publish:
 
 ```bash
-sudo ./scripts/publish-milestone1.6-release.sh
+sudo ./scripts/publish-milestone1.6v2-release.sh
 ```
 
 ## Test in QEMU
