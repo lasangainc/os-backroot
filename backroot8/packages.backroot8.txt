@@ -5,6 +5,7 @@ base
 base-devel
 xorg-server
 xorg-xinit
+openbox
 xorg-xrandr
 xf86-video-vesa
 xterm

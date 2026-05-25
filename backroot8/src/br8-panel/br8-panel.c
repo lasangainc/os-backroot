@@ -57,6 +57,9 @@ static int panel_w;
 static Atom br8_frame, br8_client, br8_panel_rev, br8_activate, br8_start_open;
 static Atom br8_metro_active;
 static Atom net_wm_icon, net_wm_name, utf8_string;
+static Atom net_client_list, net_wm_state, net_wm_state_hidden, net_active_window;
+static Atom net_wm_window_type, net_wm_window_type_desktop, net_wm_window_type_dock;
+static int external_wm;
 static TaskBtn tasks[MAX_TASKS];
 static int ntasks;
 static unsigned long last_rev;
@@ -783,8 +786,79 @@ static Window frame_client(Window frame) {
     return c;
 }
 
-static void collect_tasks(void) {
-    free_tasks();
+static int window_skip_taskbar(Window w) {
+    if (w == panel)
+        return 1;
+    XWindowAttributes wa;
+    if (XGetWindowAttributes(dpy, w, &wa) && wa.override_redirect)
+        return 1;
+    XClassHint hint;
+    if (XGetClassHint(dpy, w, &hint)) {
+        const char *cls = hint.res_class;
+        const char *name = hint.res_name;
+        if ((cls && (strcasecmp(cls, "feh") == 0 || strcasecmp(cls, "br8-panel") == 0)) ||
+            (name && (strcasecmp(name, "br8-panel") == 0 || strcasecmp(name, "br8-start") == 0)))
+            return 1;
+        if (hint.res_name)
+            XFree(hint.res_name);
+        if (hint.res_class)
+            XFree(hint.res_class);
+    }
+    Atom actual;
+    int fmt;
+    unsigned long n, bytes;
+    Atom *data = NULL;
+    if (XGetWindowProperty(dpy, w, net_wm_window_type, 0, 16, False, XA_ATOM,
+            &actual, &fmt, &n, &bytes, (unsigned char **)&data) == Success && data) {
+        for (unsigned long i = 0; i < n; i++) {
+            if (data[i] == net_wm_window_type_desktop ||
+                data[i] == net_wm_window_type_dock) {
+                XFree(data);
+                return 1;
+            }
+        }
+        XFree(data);
+    }
+    return 0;
+}
+
+static void collect_tasks_ewmh(void) {
+    Atom actual;
+    int fmt;
+    unsigned long n, bytes;
+    Window *list = NULL;
+    if (XGetWindowProperty(dpy, root, net_client_list, 0, 512, False, XA_WINDOW,
+            &actual, &fmt, &n, &bytes, (unsigned char **)&list) != Success || !list)
+        return;
+
+    int x = BRAND_W + 8;
+    for (long i = (long)n - 1; i >= 0 && ntasks < MAX_TASKS; i--) {
+        Window client = list[i];
+        if (!window_alive(client) || window_skip_taskbar(client))
+            continue;
+
+        TaskBtn *t = &tasks[ntasks++];
+        memset(t, 0, sizeof(*t));
+        t->frame = client;
+        t->client = client;
+        t->x = x;
+        t->w = ICON_SZ + ICON_PAD * 2;
+        x += t->w + TASK_GAP;
+
+        get_client_label(client, t->label, sizeof(t->label));
+        t->icon = icon_from_net_wm(client);
+        if (!t->icon)
+            t->icon = icon_from_desktop(client);
+        if (!t->icon)
+            t->icon = icon_fallback(client);
+        t->icon_w = ICON_SZ;
+        t->icon_h = ICON_SZ;
+    }
+    if (list)
+        XFree(list);
+}
+
+static void collect_tasks_br8wm(void) {
     Window root_ret, parent_ret;
     Window *children = NULL;
     unsigned int nch;
@@ -821,7 +895,16 @@ static void collect_tasks(void) {
         t->icon_w = ICON_SZ;
         t->icon_h = ICON_SZ;
     }
-    if (children) XFree(children);
+    if (children)
+        XFree(children);
+}
+
+static void collect_tasks(void) {
+    free_tasks();
+    if (external_wm)
+        collect_tasks_ewmh();
+    else
+        collect_tasks_br8wm();
 }
 
 static void draw_panel(void) {
@@ -890,13 +973,37 @@ static TaskBtn *task_at(int px) {
 static void activate_task(TaskBtn *t) {
     if (!t || !window_alive(t->frame))
         return;
-    /* Tell WM to restore (property is reliable; ClientMessage often is not). */
-    XChangeProperty(dpy, root, br8_activate, XA_WINDOW, 32, PropModeReplace,
-        (unsigned char *)&t->frame, 1);
-    /* Also map directly — is_our_chrome prevents duplicate title bars now. */
-    XMapWindow(dpy, t->frame);
-    XMapSubwindows(dpy, t->frame);
-    XRaiseWindow(dpy, t->frame);
+    if (external_wm) {
+        XEvent ev;
+        memset(&ev, 0, sizeof(ev));
+        ev.xclient.type = ClientMessage;
+        ev.xclient.window = t->client;
+        ev.xclient.message_type = net_wm_state;
+        ev.xclient.format = 32;
+        ev.xclient.data.l[0] = 0;
+        ev.xclient.data.l[1] = (long)net_wm_state_hidden;
+        ev.xclient.data.l[2] = 0;
+        XSendEvent(dpy, root, False,
+            SubstructureRedirectMask | SubstructureNotifyMask, &ev);
+        memset(&ev, 0, sizeof(ev));
+        ev.xclient.type = ClientMessage;
+        ev.xclient.window = t->client;
+        ev.xclient.message_type = net_active_window;
+        ev.xclient.format = 32;
+        ev.xclient.data.l[0] = 1;
+        ev.xclient.data.l[1] = CurrentTime;
+        ev.xclient.data.l[2] = 0;
+        XSendEvent(dpy, root, False,
+            SubstructureRedirectMask | SubstructureNotifyMask, &ev);
+        XMapWindow(dpy, t->client);
+        XRaiseWindow(dpy, t->client);
+    } else {
+        XChangeProperty(dpy, root, br8_activate, XA_WINDOW, 32, PropModeReplace,
+            (unsigned char *)&t->frame, 1);
+        XMapWindow(dpy, t->frame);
+        XMapSubwindows(dpy, t->frame);
+        XRaiseWindow(dpy, t->frame);
+    }
     XFlush(dpy);
 }
 
@@ -992,6 +1099,14 @@ int main(void) {
     net_wm_icon = XInternAtom(dpy, "_NET_WM_ICON", False);
     net_wm_name = XInternAtom(dpy, "_NET_WM_NAME", False);
     utf8_string = XInternAtom(dpy, "UTF8_STRING", False);
+    net_client_list = XInternAtom(dpy, "_NET_CLIENT_LIST", False);
+    net_wm_state = XInternAtom(dpy, "_NET_WM_STATE", False);
+    net_wm_state_hidden = XInternAtom(dpy, "_NET_WM_STATE_HIDDEN", False);
+    net_active_window = XInternAtom(dpy, "_NET_ACTIVE_WINDOW", False);
+    net_wm_window_type = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE", False);
+    net_wm_window_type_desktop = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE_DESKTOP", False);
+    net_wm_window_type_dock = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE_DOCK", False);
+    external_wm = getenv("BR8_EXTERNAL_WM") != NULL;
 
     XWindowAttributes ra;
     XGetWindowAttributes(dpy, root, &ra);
