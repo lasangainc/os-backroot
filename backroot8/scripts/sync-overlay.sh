@@ -23,6 +23,7 @@ run_make() {
 log "Building desktop binaries..."
 run_make "$ROOT/scripts/prepare-bootscreen.sh"
 run_make "$ROOT/scripts/prepare-install-banner.sh"
+run_make "$ROOT/scripts/prepare-win7-cursors.sh"
 run_make python3 "$ROOT/scripts/prepare-neoemblem.py" \
     "$ROOT/assets/neoemblem-source.txt" "$ROOT/assets/neoemblem.txt"
 run_make make -C "$ROOT/src/br8-panel" emblem.h
