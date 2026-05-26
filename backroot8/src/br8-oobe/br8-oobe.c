@@ -58,6 +58,7 @@
 #define PAGE_TRANS_MS 420
 #define CARET_BLINK_MS 530
 #define LOADING_STATUS "/run/br8-oobe/loading-status"
+#define LOADING_REBOOT_MSG "Your computer will perform a full reboot."
 #define OOBE_DEBUG "/etc/backroot8/oobe-debug"
 
 #define SETUP_SCRIPT "/usr/lib/backroot8/br8-oobe-setup.sh"
@@ -625,20 +626,27 @@ static const char *loading_subtitle(void) {
 
 static void draw_loading(void) {
     const char *main_text = "We are setting your computer up.";
-    const char *sub_text = loading_subtitle();
+    const char *step_text = loading_subtitle();
+    const char *reboot_text = LOADING_REBOOT_MSG;
 
-    int mw = text_width(font_header, main_text);
-    int sw = text_width(font_sub, sub_text);
-    int cy = win_h / 2;
     int header_h = font_header ? font_header->height : 42;
+    int sub_h = font_sub ? font_sub->height : 22;
+    int mw = text_width(font_header, main_text);
+    int sw = text_width(font_sub, step_text);
+    int rw = text_width(font_sub, reboot_text);
 
-    xft_draw(canvas, (win_w - mw) / 2,
-        cy + text_baseline(header_h, font_header),
+    int block_h = header_h + 28 + sub_h + 32 + sub_h;
+    int y0 = win_h / 2 - block_h / 2;
+
+    xft_draw(canvas, (win_w - mw) / 2, y0 + text_baseline(header_h, font_header),
         main_text, COL_TEXT_R, COL_TEXT_G, COL_TEXT_B, font_header);
 
-    xft_draw(canvas, (win_w - sw) / 2,
-        cy + header_h + 36,
-        sub_text, COL_MUTED_R, COL_MUTED_G, COL_MUTED_B, font_sub);
+    xft_draw(canvas, (win_w - sw) / 2, y0 + header_h + 28 + text_baseline(sub_h, font_sub),
+        step_text, COL_MUTED_R, COL_MUTED_G, COL_MUTED_B, font_sub);
+
+    xft_draw(canvas, (win_w - rw) / 2,
+        y0 + header_h + 28 + sub_h + 32 + text_baseline(sub_h, font_sub),
+        reboot_text, COL_TEXT_R, COL_TEXT_G, COL_TEXT_B, font_sub);
 
     int dots = ((int)(loading_anim * 2.0)) % 4;
     char dotbuf[8] = "";
@@ -646,7 +654,7 @@ static void draw_loading(void) {
         strcat(dotbuf, ".");
     int dw = text_width(font_sub, dotbuf);
     xft_draw(canvas, (win_w - dw) / 2,
-        cy + header_h + 72,
+        y0 + block_h + 16,
         dotbuf, COL_MUTED_R, COL_MUTED_G, COL_MUTED_B, font_sub);
 }
 
@@ -800,6 +808,15 @@ static void start_setup(void) {
 
     save_wallpaper_choice();
     phase = PHASE_LOADING;
+    mkdir("/run/br8-oobe", 1777);
+    chmod("/run/br8-oobe", 01777);
+    {
+        FILE *st = fopen(LOADING_STATUS, "w");
+        if (st) {
+            fputs("Creating your account...\n", st);
+            fclose(st);
+        }
+    }
     draw_all();
 
     char pass_file[128];
@@ -1052,7 +1069,7 @@ static int run_event_loop(int until_panel) {
                 setup_pid = 0;
                 unlink("/run/br8-oobe/pass");
                 if (WIFEXITED(st) && WEXITSTATUS(st) == 0) {
-                    /* setup.sh restarts the desktop; keep splash until handoff */
+                    /* setup.sh triggers a full reboot; keep splash until shutdown */
                     phase = PHASE_LOADING;
                     draw_all();
                 } else {

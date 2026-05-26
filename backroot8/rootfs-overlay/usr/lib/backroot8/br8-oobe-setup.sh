@@ -67,13 +67,11 @@ chmod +x "/home/$USER_NAME/.xinitrc"
 loginctl enable-linger "$USER_NAME" 2>/dev/null || true
 runuser -u "$USER_NAME" -- fc-cache -f 2>/dev/null || true
 
-rm -f /run/br8-oobe/panel-ready
-touch /run/br8-oobe/keep-loading
-
 rm -f /etc/backroot8/oobe-pending
 touch /etc/backroot8/oobe-complete
 
-loading_status "Starting your desktop..."
-# Restart as the new user (outside desktop service cgroup).
-systemd-run --no-block --collect \
-    /usr/bin/systemctl restart backroot8-desktop.service
+loading_status "Your computer will perform a full reboot."
+sync
+sleep 4
+
+systemd-run --no-block --collect /usr/bin/systemctl reboot
