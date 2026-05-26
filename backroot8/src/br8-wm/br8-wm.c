@@ -6,6 +6,7 @@
 #include <X11/Xutil.h>
 #include <X11/Xft/Xft.h>
 #include <X11/cursorfont.h>
+#include <X11/Xcursor/Xcursor.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -124,6 +125,13 @@ static const char *const menu_labels[MENU_ITEMS] = {
     "New terminal at root",
     "Dolphin file explorer",
 };
+
+static Cursor theme_cursor(const char *name, unsigned int font_fallback) {
+    Cursor c = XcursorLibraryLoadCursor(dpy, name);
+    if (!c)
+        c = XCreateFontCursor(dpy, font_fallback);
+    return c;
+}
 
 static unsigned long rgb(int r, int g, int b) {
     XColor c;
@@ -1297,7 +1305,7 @@ static void add_client(Window w) {
         ButtonPressMask | ButtonReleaseMask | PointerMotionMask,
         GrabModeAsync, GrabModeAsync, root, None);
     {
-        Cursor sz_cur = XCreateFontCursor(dpy, XC_bottom_right_corner);
+        Cursor sz_cur = theme_cursor("bottom_right_corner", XC_bottom_right_corner);
         XDefineCursor(dpy, c->resize_grip, sz_cur);
     }
     XGrabButton(dpy, Button1, AnyModifier, c->resize_grip, False,
@@ -1489,8 +1497,10 @@ int main(void) {
     bump_panel();
     poll_panel_crash();
 
-    Cursor cur = XCreateFontCursor(dpy, XC_left_ptr);
-    XDefineCursor(dpy, root, cur);
+    {
+        Cursor cur = theme_cursor("left_ptr", XC_left_ptr);
+        XDefineCursor(dpy, root, cur);
+    }
 
     while (1) {
         poll_panel_crash();

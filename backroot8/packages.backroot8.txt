@@ -4,6 +4,7 @@ linux-firmware
 base
 base-devel
 xorg-server
+libxcursor
 xorg-xinit
 xorg-xrandr
 xf86-video-vesa
