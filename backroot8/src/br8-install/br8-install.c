@@ -851,8 +851,7 @@ static void open_command_line(void) {
 }
 
 static int show_recovery_link(void) {
-    return step == STEP_WELCOME || step == STEP_SETUP || step == STEP_INSTALLING ||
-        step == STEP_FAILED;
+    return step == STEP_WELCOME || step == STEP_FAILED;
 }
 
 static void recovery_link_layout(int *rx, int *ry) {
