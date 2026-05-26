@@ -2,6 +2,8 @@
 # Backroot 8 session startup
 export DESKTOP_SESSION=backroot8
 export DISPLAY=:0
+export XCURSOR_THEME=Win7OS-cursors
+export XCURSOR_SIZE=24
 xrdb -merge /etc/X11/Xresources 2>/dev/null || true
 
 OOBE_LOADING=0
