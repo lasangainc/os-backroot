@@ -21,6 +21,22 @@ if [ "$OOBE_LOADING" = 0 ]; then
     xsetroot -solid black
 fi
 
+# Drop Plymouth before lock/desktop so the X session is visible
+if command -v plymouth >/dev/null 2>&1; then
+    plymouth --ping 2>/dev/null && plymouth quit 2>/dev/null || true
+fi
+
+# Lock screen when the session user has a password (skip OOBE / loading handoff)
+NEEDS_LOCK=0
+if [ "$OOBE_LOADING" = 0 ] && [ ! -f /etc/backroot8/oobe-pending ]; then
+    if /usr/lib/backroot8/br8-has-password.sh; then
+        NEEDS_LOCK=1
+    fi
+fi
+if [ "$NEEDS_LOCK" = 1 ] && [ -x /usr/local/bin/br8-lock ]; then
+    /usr/local/bin/br8-lock
+fi
+
 if command -v feh >/dev/null && [ -r "$WALLPAPER" ]; then
     feh --bg-fill "$WALLPAPER" &
 else
@@ -50,7 +66,10 @@ if ! /usr/lib/backroot8/is-live-boot.sh && [ ! -f /etc/backroot8/oobe-pending ];
         -title "${USER:-root}@Backroot8" -e /bin/bash -l &
 fi
 
-/usr/lib/backroot8/br8-plymouth-quit.sh &
+# Plymouth quit runs early (before lock); skip duplicate call here unless OOBE loading handoff
+if [ "$OOBE_LOADING" = 1 ]; then
+    /usr/lib/backroot8/br8-plymouth-quit.sh &
+fi
 
 # Brief pause so panel maps and signals panel-ready before WM (OOBE handoff)
 if [ "$OOBE_LOADING" = 1 ]; then

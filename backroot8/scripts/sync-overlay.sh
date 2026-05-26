@@ -34,6 +34,8 @@ run_make make -C "$ROOT/src/br8-settings" clean br8-settings
 run_make make -C "$ROOT/src/power-pdf" clean powerpdf
 run_make make -C "$ROOT/src/br8-install" clean br8-install
 run_make make -C "$ROOT/src/br8-oobe" clean br8-oobe
+run_make make -C "$ROOT/src/br8-lock" clean br8-lock
+run_make make -C "$ROOT/src/br8-chkpass" clean br8-chkpass
 
 install -Dm755 "$ROOT/src/br8-wm/br8-wm" "$DEST/usr/local/bin/br8-wm"
 install -Dm755 "$ROOT/src/br8-panel/br8-panel" "$DEST/usr/local/bin/br8-panel"
@@ -42,6 +44,12 @@ install -Dm755 "$ROOT/src/br8-settings/br8-settings" "$DEST/usr/local/bin/br8-se
 install -Dm755 "$ROOT/src/power-pdf/powerpdf" "$DEST/usr/local/bin/powerpdf"
 install -Dm755 "$ROOT/src/br8-install/br8-install" "$DEST/usr/local/bin/br8-install"
 install -Dm755 "$ROOT/src/br8-oobe/br8-oobe" "$DEST/usr/local/bin/br8-oobe"
+install -Dm755 "$ROOT/src/br8-lock/br8-lock" "$DEST/usr/local/bin/br8-lock"
+install -Dm4755 "$ROOT/src/br8-chkpass/br8-chkpass" "$DEST/usr/libexec/br8-chkpass"
+install -Dm755 "$ROOT/rootfs-overlay/usr/lib/backroot8/br8-has-password.sh" \
+    "$DEST/usr/lib/backroot8/br8-has-password.sh"
+install -Dm755 "$ROOT/rootfs-overlay/usr/lib/backroot8/br8-logout.sh" \
+    "$DEST/usr/lib/backroot8/br8-logout.sh"
 install -Dm755 "$ROOT/rootfs-overlay/usr/lib/backroot8/is-live-boot.sh" \
     "$DEST/usr/lib/backroot8/is-live-boot.sh"
 install -Dm755 "$ROOT/rootfs-overlay/usr/lib/backroot8/br8-install-to-disk.sh" \
