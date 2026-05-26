@@ -23,7 +23,6 @@ run_make() {
 log "Building desktop binaries..."
 run_make "$ROOT/scripts/prepare-bootscreen.sh"
 run_make "$ROOT/scripts/prepare-install-banner.sh"
-run_make "$ROOT/scripts/prepare-win7-cursors.sh"
 run_make python3 "$ROOT/scripts/prepare-neoemblem.py" \
     "$ROOT/assets/neoemblem-source.txt" "$ROOT/assets/neoemblem.txt"
 run_make make -C "$ROOT/src/br8-panel" emblem.h
@@ -62,6 +61,14 @@ install -Dm644 "$ROOT/rootfs-overlay/usr/share/applications/br8-settings.desktop
 install -Dm644 "$ROOT/rootfs-overlay/usr/share/applications/powerpdf.desktop" \
     "$DEST/usr/share/applications/powerpdf.desktop"
 install -Dm755 "$ROOT/rootfs-overlay/etc/X11/xinit/xinitrc" "$DEST/etc/X11/xinit/xinitrc"
+install -Dm644 "$ROOT/rootfs-overlay/etc/X11/Xresources" "$DEST/etc/X11/Xresources"
+if [ -d "$ROOT/rootfs-overlay/usr/share/icons/Win7OS-cursors" ]; then
+    rm -rf "$DEST/usr/share/icons/Win7OS-cursors"
+    cp -a "$ROOT/rootfs-overlay/usr/share/icons/Win7OS-cursors" \
+        "$DEST/usr/share/icons/Win7OS-cursors"
+fi
+install -Dm644 "$ROOT/rootfs-overlay/usr/share/icons/default/index.theme" \
+    "$DEST/usr/share/icons/default/index.theme"
 install -Dm644 "$ROOT/rootfs-overlay/usr/share/backgrounds/backroot8.jpg" \
     "$DEST/usr/share/backgrounds/backroot8.jpg"
 install -Dm644 "$ROOT/rootfs-overlay/usr/share/backroot8/bootscreen.png" \
