@@ -1053,6 +1053,9 @@ int main(void) {
     root = RootWindow(dpy, screen);
     visual = DefaultVisual(dpy, screen);
     cmap = DefaultColormap(dpy, screen);
+    XSetWindowBackground(dpy, root, rgb(COL_BG_R, COL_BG_G, COL_BG_B));
+    XClearWindow(dpy, root);
+    XFlush(dpy);
     open_fonts();
     load_disks();
 

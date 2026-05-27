@@ -12,36 +12,46 @@ if [ -f /run/br8-oobe/keep-loading ]; then
     /usr/local/bin/br8-oobe --loading &
 fi
 
-WALLPAPER=/usr/share/backgrounds/backroot8.jpg
-if [ -r "$HOME/.config/backroot8/wallpaper.jpg" ]; then
-    WALLPAPER="$HOME/.config/backroot8/wallpaper.jpg"
-fi
-
-if [ "$OOBE_LOADING" = 0 ]; then
-    xsetroot -solid black
-fi
-
-if command -v feh >/dev/null && [ -r "$WALLPAPER" ]; then
-    feh --bg-fill "$WALLPAPER" &
-else
-    [ "$OOBE_LOADING" = 0 ] && xsetroot -solid "#1e2030"
-fi
-
-# Panel before WM so the taskbar maps before br8-wm manages clients
-/usr/share/backroot8/br8-panel-launcher.sh &
-PANEL_PID=$!
-
-# Start menu overlay (Home / Apps launcher) — keep one long-lived instance
-/usr/local/bin/br8-start &
-
-# Live USB/ISO: install wizard (metro window)
+LIVE_BOOT=0
 if /usr/lib/backroot8/is-live-boot.sh; then
+    LIVE_BOOT=1
+fi
+
+# Live ISO install screen: blue desktop, no taskbar or start menu
+if [ "$LIVE_BOOT" = 1 ]; then
+    xsetroot -solid rgb:00/78/D4 2>/dev/null || xsetroot -solid rgb:0/120/212
+elif [ "$OOBE_LOADING" = 0 ]; then
+    WALLPAPER=/usr/share/backgrounds/backroot8.jpg
+    if [ -r "$HOME/.config/backroot8/wallpaper.jpg" ]; then
+        WALLPAPER="$HOME/.config/backroot8/wallpaper.jpg"
+    fi
+
+    xsetroot -solid black
+
+    if command -v feh >/dev/null && [ -r "$WALLPAPER" ]; then
+        feh --bg-fill "$WALLPAPER" &
+    else
+        xsetroot -solid "#1e2030"
+    fi
+fi
+
+if [ "$LIVE_BOOT" = 0 ]; then
+    # Panel before WM so the taskbar maps before br8-wm manages clients
+    /usr/share/backroot8/br8-panel-launcher.sh &
+    PANEL_PID=$!
+
+    # Start menu overlay (Home / Apps launcher) — keep one long-lived instance
+    /usr/local/bin/br8-start &
+fi
+
+# Live USB/ISO: install wizard
+if [ "$LIVE_BOOT" = 1 ]; then
     /usr/local/bin/br8-install &
 fi
 
 # First boot after install, or live debug: OOBE (fullscreen metro)
 if [ -f /etc/backroot8/oobe-pending ]; then
-    if [ -f /etc/backroot8/oobe-debug ] || ! /usr/lib/backroot8/is-live-boot.sh; then
+    if [ -f /etc/backroot8/oobe-debug ] || [ "$LIVE_BOOT" = 0 ]; then
         /usr/local/bin/br8-oobe &
     fi
 fi

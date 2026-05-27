@@ -126,6 +126,23 @@ static const char *const menu_labels[MENU_ITEMS] = {
     "Dolphin file explorer",
 };
 
+#define LIVE_BG_R 0
+#define LIVE_BG_G 120
+#define LIVE_BG_B 212
+
+static int is_live_boot(void) {
+    FILE *fp = fopen("/proc/cmdline", "r");
+    char buf[4096];
+    if (!fp)
+        return 0;
+    if (!fgets(buf, sizeof buf, fp)) {
+        fclose(fp);
+        return 0;
+    }
+    fclose(fp);
+    return strstr(buf, "backroot8iso") != NULL;
+}
+
 static Cursor theme_cursor(const char *name, unsigned int font_fallback) {
     Cursor c = XcursorLibraryLoadCursor(dpy, name);
     if (!c)
@@ -141,6 +158,14 @@ static unsigned long rgb(int r, int g, int b) {
     if (!XAllocColor(dpy, cmap, &c))
         return BlackPixel(dpy, screen);
     return c.pixel;
+}
+
+static void paint_live_install_background(void) {
+    if (!is_live_boot())
+        return;
+    XSetWindowBackground(dpy, root, rgb(LIVE_BG_R, LIVE_BG_G, LIVE_BG_B));
+    XClearWindow(dpy, root);
+    XFlush(dpy);
 }
 
 static XRenderColor render_rgb(int r, int g, int b) {
@@ -1490,6 +1515,7 @@ int main(void) {
     }
 
     update_root_geom();
+    paint_live_install_background();
     adopt_existing_clients();
     create_menu();
     create_crash_windows();
