@@ -106,6 +106,9 @@ static int resizing;
 static int resize_x, resize_y;
 static int resize_w, resize_h;
 static Client *resize_client;
+static int chrome_paused;
+static XftDraw *title_xft;
+static Window title_xft_win;
 static Window menu_win;
 static int menu_visible;
 static int menu_hover = -1;
@@ -158,10 +161,24 @@ static int text_baseline(int height) {
     return (height + ui_font->ascent - ui_font->descent) / 2;
 }
 
+static XftDraw *title_xft_get(Window win) {
+    if (title_xft && title_xft_win == win)
+        return title_xft;
+    if (title_xft) {
+        XftDrawDestroy(title_xft);
+        title_xft = NULL;
+        title_xft_win = 0;
+    }
+    title_xft = XftDrawCreate(dpy, win, visual, xft_cmap);
+    if (title_xft)
+        title_xft_win = win;
+    return title_xft;
+}
+
 static void xft_draw(Window win, int x, int y, const char *text, int r, int g, int b) {
     if (!ui_font || !text || !text[0])
         return;
-    XftDraw *xd = XftDrawCreate(dpy, win, visual, xft_cmap);
+    XftDraw *xd = title_xft_get(win);
     if (!xd)
         return;
     XftColor col;
@@ -170,7 +187,11 @@ static void xft_draw(Window win, int x, int y, const char *text, int r, int g, i
         XftDrawStringUtf8(xd, &col, ui_font, x, y, (FcChar8 *)text, (int)strlen(text));
         XftColorFree(dpy, visual, xft_cmap, &col);
     }
-    XftDrawDestroy(xd);
+}
+
+static void draw_title_bg(Client *c) {
+    XSetForeground(dpy, gc_title, rgb(43, 43, 43));
+    XFillRectangle(dpy, c->title, gc_title, 0, 0, c->w, TITLE_H);
 }
 
 static int btn_total_width(void) {
@@ -342,8 +363,7 @@ static void draw_resize_grip(Client *c) {
 static void draw_title(Client *c) {
     int title_w = c->w - btn_total_width();
 
-    XSetForeground(dpy, gc_title, rgb(43, 43, 43));
-    XFillRectangle(dpy, c->title, gc_title, 0, 0, c->w, TITLE_H);
+    draw_title_bg(c);
 
     if (!c->name[0])
         return;
@@ -1096,7 +1116,7 @@ static void handle_crash_button(XButtonEvent *btn) {
         toggle_crash_drawer();
 }
 
-static void layout_client(Client *c) {
+static void layout_client_geometry(Client *c, int raise_chrome) {
     int tx = c->w - btn_total_width();
     int grip_x = c->w - RESIZE_SZ;
     int grip_y = c->h - RESIZE_SZ;
@@ -1116,22 +1136,45 @@ static void layout_client(Client *c) {
     XMoveResizeWindow(dpy, c->btn_max, tx, btn_y, BTN_W, BTN_H);
     tx += BTN_W;
     XMoveResizeWindow(dpy, c->btn_close, tx, -CAP_RISE, CLOSE_W, cap_h);
-    XRaiseWindow(dpy, c->btn_min);
-    XRaiseWindow(dpy, c->btn_max);
-    XRaiseWindow(dpy, c->btn_close);
     XMoveResizeWindow(dpy, c->resize_grip, grip_x, grip_y, RESIZE_SZ, RESIZE_SZ);
-    XRaiseWindow(dpy, c->resize_grip);
+    if (raise_chrome) {
+        XRaiseWindow(dpy, c->btn_min);
+        XRaiseWindow(dpy, c->btn_max);
+        XRaiseWindow(dpy, c->btn_close);
+        XRaiseWindow(dpy, c->resize_grip);
+    }
+}
+
+static void layout_client(Client *c) {
+    layout_client_geometry(c, 1);
     draw_chrome(c);
 }
 
-static void resize_client_to(Client *c, int w, int h) {
+static void resize_client_to(Client *c, int w, int h, int interactive) {
     if (w < MIN_FRAME_W)
         w = MIN_FRAME_W;
     if (h < MIN_FRAME_H)
         h = MIN_FRAME_H;
+    if (w == c->w && h == c->h)
+        return;
     c->w = w;
     c->h = h;
     XMoveResizeWindow(dpy, c->frame, c->x, c->y, c->w, c->h);
+    layout_client_geometry(c, 0);
+    if (!interactive) {
+        draw_chrome(c);
+        return;
+    }
+    /* Keep title bar solid while dragging; skip Xft until release. */
+    draw_title_bg(c);
+}
+
+static void finish_interactive_resize(void) {
+    Client *c = resize_client;
+
+    chrome_paused = 0;
+    if (!c)
+        return;
     layout_client(c);
 }
 
@@ -1614,6 +1657,7 @@ int main(void) {
                        !c->maximized) {
                 raise_client(c);
                 resizing = 1;
+                chrome_paused = 1;
                 resize_client = c;
                 resize_x = ev.xbutton.x_root;
                 resize_y = ev.xbutton.y_root;
@@ -1623,13 +1667,21 @@ int main(void) {
         } else if (ev.type == ButtonRelease) {
             if (metro_swipe)
                 metro_swipe = 0;
-            if (dragging || resizing) {
-                dragging = 0;
-                drag_client = NULL;
+            if (resizing) {
+                finish_interactive_resize();
                 resizing = 0;
                 resize_client = NULL;
             }
+            if (dragging) {
+                dragging = 0;
+                drag_client = NULL;
+            }
         } else if (ev.type == MotionNotify) {
+            if (resizing || dragging) {
+                XEvent motion = ev;
+                while (XCheckTypedEvent(dpy, MotionNotify, &motion))
+                    ev = motion;
+            }
             if (metro_swipe && (ev.xmotion.state & Button1Mask))
                 metro_check_swipe_gesture(&ev.xmotion);
             charms_pointer_update(ev.xmotion.x_root, ev.xmotion.y_root);
@@ -1645,7 +1697,7 @@ int main(void) {
             } else if (resizing && resize_client) {
                 int nw = resize_w + (ev.xmotion.x_root - resize_x);
                 int nh = resize_h + (ev.xmotion.y_root - resize_y);
-                resize_client_to(resize_client, nw, nh);
+                resize_client_to(resize_client, nw, nh, 1);
             }
         } else if (ev.type == LeaveNotify && menu_visible &&
                    ev.xcrossing.window == menu_win) {
@@ -1664,7 +1716,10 @@ int main(void) {
             else {
                 Client *c = find_client(ev.xexpose.window);
                 if (c) {
-                    if (ev.xexpose.window == c->title)
+                    if (chrome_paused && c == resize_client) {
+                        if (ev.xexpose.window == c->title)
+                            draw_title_bg(c);
+                    } else if (ev.xexpose.window == c->title)
                         draw_title(c);
                     else if (ev.xexpose.window == c->btn_min)
                         draw_min_button(c);
