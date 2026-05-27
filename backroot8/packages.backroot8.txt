@@ -6,6 +6,7 @@ base-devel
 xorg-server
 libxcursor
 xorg-xinit
+openbox
 xorg-xrandr
 xf86-video-vesa
 xterm

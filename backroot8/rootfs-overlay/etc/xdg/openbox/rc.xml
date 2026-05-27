@@ -1,0 +1,112 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<openbox_config xmlns="http://openbox.org/3.4/rc"
+  xmlns:xi="http://www.w3.org/2001/XInclude">
+  <theme>
+    <name>Backroot8-Sharp</name>
+    <titleLayout>    CMX</titleLayout>
+    <animateIconify>false</animateIconify>
+    <font place="ActiveWindow">
+      <name>Sans</name>
+      <size>10</size>
+      <weight>bold</weight>
+      <slant>normal</slant>
+    </font>
+    <font place="InactiveWindow">
+      <name>Sans</name>
+      <size>10</size>
+      <weight>bold</weight>
+      <slant>normal</slant>
+    </font>
+    <font place="ActiveWindowTitle">
+      <name>Sans</name>
+      <size>10</size>
+      <weight>bold</weight>
+      <slant>normal</slant>
+    </font>
+    <font place="InactiveWindowTitle">
+      <name>Sans</name>
+      <size>10</size>
+      <weight>bold</weight>
+      <slant>normal</slant>
+    </font>
+  </theme>
+  <desktops>
+    <number>1</number>
+    <names><name>Desktop</name></names>
+  </desktops>
+  <keyboard>
+    <keybind key="W-Escape">
+      <action name="Execute"><command>xterm</command></action>
+    </keybind>
+  </keyboard>
+  <mouse>
+    <context name="Root">
+      <mousebind button="Right" action="Press">
+        <action name="ShowMenu"><menu>root-menu</menu></action>
+      </mousebind>
+    </context>
+    <context name="Titlebar">
+      <mousebind button="Left" action="Press">
+        <action name="Focus"/><action name="Raise"/>
+        <action name="Unshade"/>
+        <action name="Move"/>
+      </mousebind>
+      <mousebind button="Left" action="DoubleClick">
+        <action name="ToggleMaximize"/>
+      </mousebind>
+      <mousebind button="Right" action="Press">
+        <action name="Focus"/><action name="Raise"/>
+        <action name="ShowMenu"><menu>client-menu</menu></action>
+      </mousebind>
+    </context>
+    <context name="Close">
+      <mousebind button="Left" action="Press">
+        <action name="Close"/>
+      </mousebind>
+    </context>
+    <context name="Maximize">
+      <mousebind button="Left" action="Press">
+        <action name="ToggleMaximize"/>
+      </mousebind>
+    </context>
+    <context name="Iconify">
+      <mousebind button="Left" action="Press">
+        <action name="Iconify"/>
+      </mousebind>
+    </context>
+  </mouse>
+  <applications>
+    <!-- Metro apps: borderless fullscreen (charms via br8-metro-helper) -->
+    <application class="Br8Settings" name="br8-settings">
+      <decor>no</decor>
+      <maximized>true</maximized>
+      <fullscreen>yes</fullscreen>
+    </application>
+    <application class="PowerPDF" name="powerpdf">
+      <decor>no</decor>
+      <maximized>true</maximized>
+      <fullscreen>yes</fullscreen>
+    </application>
+    <application class="Br8Oobe" name="br8-oobe">
+      <decor>no</decor>
+      <maximized>true</maximized>
+      <fullscreen>yes</fullscreen>
+    </application>
+    <application class="feh">
+      <decor>no</decor>
+      <focus>no</focus>
+    </application>
+    <application name="br8-panel">
+      <decor>no</decor>
+      <focus>no</focus>
+      <skip_taskbar>yes</skip_taskbar>
+      <skip_pager>yes</skip_pager>
+    </application>
+    <application name="br8-start">
+      <decor>no</decor>
+      <focus>no</focus>
+      <fullscreen>yes</fullscreen>
+      <skip_taskbar>yes</skip_taskbar>
+    </application>
+  </applications>
+</openbox_config>

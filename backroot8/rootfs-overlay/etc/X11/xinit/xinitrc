@@ -27,7 +27,10 @@ else
     [ "$OOBE_LOADING" = 0 ] && xsetroot -solid "#1e2030"
 fi
 
-# Panel before WM so the taskbar maps before br8-wm manages clients
+# Experimental: Openbox WM + br8-metro-helper (Metro/charms); keep br8-start + panel.
+export BR8_EXTERNAL_WM=openbox
+
+# Panel before WM so the taskbar maps before clients are managed
 /usr/share/backroot8/br8-panel-launcher.sh &
 PANEL_PID=$!
 
@@ -57,8 +60,15 @@ if [ "$OOBE_LOADING" = 1 ]; then
     rm -f /run/br8-oobe/keep-loading
 fi
 
-# Window manager (exec keeps the X session alive; OOBE loading overlay stays above until panel is up)
+# Metro fullscreen + charms (Openbox does not handle _BR8_METRO)
+/usr/local/bin/br8-metro-helper &
+
 if command -v x11vnc >/dev/null; then
     x11vnc -display :0 -forever -nopw -listen 127.0.0.1 -rfbport 5900 -shared -bg -o /tmp/x11vnc.log
 fi
-exec /usr/local/bin/br8-wm
+
+# Openbox with Backroot8-Sharp theme (centered title, elongated close, sharp corners)
+mkdir -p "$HOME/.config/openbox"
+cp -f /etc/xdg/openbox/rc.xml "$HOME/.config/openbox/rc.xml" 2>/dev/null || true
+cp -f /etc/xdg/openbox/menu.xml "$HOME/.config/openbox/menu.xml" 2>/dev/null || true
+exec openbox

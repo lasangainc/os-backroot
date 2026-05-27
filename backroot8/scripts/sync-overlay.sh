@@ -27,8 +27,10 @@ run_make "$ROOT/scripts/prepare-win7-cursors.sh"
 run_make python3 "$ROOT/scripts/prepare-neoemblem.py" \
     "$ROOT/assets/neoemblem-source.txt" "$ROOT/assets/neoemblem.txt"
 run_make make -C "$ROOT/src/br8-panel" emblem.h
+run_make "$ROOT/scripts/prepare-openbox-theme.sh"
 run_make make -C "$ROOT/src/br8-wm" clean br8-wm
 run_make make -C "$ROOT/src/br8-panel" clean br8-panel
+run_make make -C "$ROOT/src/br8-metro-helper" clean br8-metro-helper
 run_make make -C "$ROOT/src/br8-start" clean br8-start
 run_make make -C "$ROOT/src/br8-settings" clean br8-settings
 run_make make -C "$ROOT/src/power-pdf" clean powerpdf
@@ -36,7 +38,13 @@ run_make make -C "$ROOT/src/br8-install" clean br8-install
 run_make make -C "$ROOT/src/br8-oobe" clean br8-oobe
 
 install -Dm755 "$ROOT/src/br8-wm/br8-wm" "$DEST/usr/local/bin/br8-wm"
+install -Dm755 "$ROOT/src/br8-metro-helper/br8-metro-helper" "$DEST/usr/local/bin/br8-metro-helper"
 install -Dm755 "$ROOT/src/br8-panel/br8-panel" "$DEST/usr/local/bin/br8-panel"
+install -Dm644 "$ROOT/rootfs-overlay/etc/xdg/openbox/rc.xml" "$DEST/etc/xdg/openbox/rc.xml"
+install -Dm644 "$ROOT/rootfs-overlay/etc/xdg/openbox/menu.xml" "$DEST/etc/xdg/openbox/menu.xml"
+mkdir -p "$DEST/usr/share/themes/Backroot8-Sharp/openbox-3"
+cp -a "$ROOT/rootfs-overlay/usr/share/themes/Backroot8-Sharp/openbox-3/." \
+    "$DEST/usr/share/themes/Backroot8-Sharp/openbox-3/"
 install -Dm755 "$ROOT/src/br8-start/br8-start" "$DEST/usr/local/bin/br8-start"
 install -Dm755 "$ROOT/src/br8-settings/br8-settings" "$DEST/usr/local/bin/br8-settings"
 install -Dm755 "$ROOT/src/power-pdf/powerpdf" "$DEST/usr/local/bin/powerpdf"
