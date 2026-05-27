@@ -14,6 +14,9 @@
 #include <ctype.h>
 #include <errno.h>
 #include <time.h>
+#include <stdbool.h>
+
+#include "qrcodegen.h"
 
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_NO_SIMD
@@ -64,13 +67,28 @@
 #define LOG_MAX_LINES 256
 #define LOG_COLS 88
 
+#define RECOVERY_LINK_W 168
+#define RECOVERY_LINK_H 26
+#define RECOVERY_ROW_H 48
+#define RECOVERY_ROW_W (WIN_W - PAD * 2)
+#define RECOVERY_QR_MOD 3
+#define WIN11_GUIDE_URL "https://www.microsoft.com/software-download/windows11"
+#define UBUNTU_GUIDE_URL "https://ubuntu.com/download/desktop"
+
 typedef enum {
     STEP_WELCOME,
     STEP_SETUP,
     STEP_INSTALLING,
     STEP_ALL_DONE,
-    STEP_FAILED
+    STEP_FAILED,
+    STEP_RECOVERY
 } Step;
+
+typedef enum {
+    RECOVERY_MENU,
+    RECOVERY_GUIDE,
+    RECOVERY_POWER
+} RecoveryView;
 
 typedef struct {
     char dev[64];
@@ -102,6 +120,12 @@ static int n_disks;
 static int disk_sel;
 static int tos_scroll;
 static int start_hover, install_hover, back_hover;
+static int recovery_link_hover;
+static int recovery_back_hover;
+static int recovery_cmd_hover, recovery_guide_hover, recovery_power_hover;
+static int recovery_restart_hover, recovery_shutdown_hover;
+static Step return_step = STEP_WELCOME;
+static RecoveryView recovery_view = RECOVERY_MENU;
 static int install_pid;
 static int win_x, win_y;
 static Pixmap banner_pm;
@@ -131,6 +155,8 @@ static const InstallStage install_stages[] = {
 };
 
 #define N_INSTALL_STAGES ((int)(sizeof install_stages / sizeof install_stages[0]))
+
+static void draw_recovery_link(void);
 
 static const char *tos_placeholder =
     "Backroot 8 — Terms of Service (placeholder)\n\n"
@@ -503,6 +529,7 @@ static void draw_welcome(void) {
     welcome_layout(&logo_y, &btn_x, &btn_y);
     draw_banner(logo_y);
     draw_metro_btn(btn_x, btn_y, BTN_W, BTN_H, "Install", start_hover, 1);
+    draw_recovery_link();
 }
 
 static void draw_tos_box(int x0, int y0, int w, int h) {
@@ -571,6 +598,7 @@ static void draw_setup(void) {
     draw_metro_btn(PAD, WIN_H - PAD - BTN_H, BTN_W, BTN_H, "Back", back_hover, 0);
     draw_metro_btn(WIN_W - PAD - BTN_W, WIN_H - PAD - BTN_H, BTN_W, BTN_H, "Install",
         install_hover, 1);
+    draw_recovery_link();
 }
 
 static void reload_log_lines(void) {
@@ -798,6 +826,7 @@ static void draw_installing(void) {
         install_output_btn(&obx, &oby);
         draw_metro_btn(obx, oby, LOG_BTN_W, BTN_H, "View output", log_btn_hover, 0);
     }
+    draw_recovery_link();
 
     if (st == 2) {
         step = STEP_ALL_DONE;
@@ -812,6 +841,220 @@ static void do_shutdown(void) {
         execl("/usr/bin/systemctl", "systemctl", "poweroff", (char *)NULL);
         execl("/sbin/poweroff", "poweroff", (char *)NULL);
         _exit(1);
+    }
+}
+
+static void do_reboot(void) {
+    if (fork() == 0) {
+        execl("/usr/bin/systemctl", "systemctl", "reboot", (char *)NULL);
+        execl("/sbin/reboot", "reboot", (char *)NULL);
+        _exit(1);
+    }
+}
+
+static void open_command_line(void) {
+    if (fork() == 0) {
+        execl("/usr/bin/xterm", "xterm", (char *)NULL);
+        _exit(1);
+    }
+}
+
+static int show_recovery_link(void) {
+    return step == STEP_WELCOME || step == STEP_FAILED;
+}
+
+static void recovery_link_layout(int *rx, int *ry) {
+    *rx = PAD;
+    *ry = PAD;
+}
+
+static void draw_recovery_link(void) {
+    int rx, ry;
+    int r, g, b;
+
+    if (!show_recovery_link())
+        return;
+    recovery_link_layout(&rx, &ry);
+    if (recovery_link_hover) {
+        r = 255;
+        g = 255;
+        b = 255;
+    } else {
+        r = COL_MUTED_R;
+        g = COL_MUTED_G;
+        b = COL_MUTED_B;
+    }
+    xft_draw(canvas, rx, ry + text_baseline(RECOVERY_LINK_H, font_body),
+        "Recovery options", r, g, b, font_body);
+}
+
+static void enter_recovery(void) {
+    return_step = step;
+    step = STEP_RECOVERY;
+    recovery_view = RECOVERY_MENU;
+    recovery_back_hover = 0;
+    recovery_cmd_hover = 0;
+    recovery_guide_hover = 0;
+    recovery_power_hover = 0;
+    recovery_restart_hover = 0;
+    recovery_shutdown_hover = 0;
+}
+
+static void exit_recovery(void) {
+    step = return_step;
+    recovery_view = RECOVERY_MENU;
+}
+
+static void draw_recovery_row(int y, const char *label, int hover) {
+    int x = PAD;
+    int w = RECOVERY_ROW_W;
+    int h = RECOVERY_ROW_H;
+    int bg_r = hover ? 255 : COL_TILE_R;
+    int bg_g = hover ? 255 : COL_TILE_G;
+    int bg_b = hover ? 255 : COL_TILE_B;
+    int fg_r = hover ? COL_BG_R : 255;
+    int fg_g = hover ? COL_BG_G : 255;
+    int fg_b = hover ? COL_BG_B : 255;
+
+    XSetForeground(dpy, gc, rgb(bg_r, bg_g, bg_b));
+    XFillRectangle(dpy, canvas, gc, x, y, w, h);
+    xft_draw(canvas, x + 16, y + text_baseline(h, font_body),
+        label, fg_r, fg_g, fg_b, font_body);
+}
+
+static int draw_qr_code(int x, int y, const char *url) {
+    uint8_t qrcode[qrcodegen_BUFFER_LEN_MAX];
+    uint8_t temp[qrcodegen_BUFFER_LEN_MAX];
+    int size;
+    int dim;
+    int i;
+    int j;
+
+    if (!qrcodegen_encodeText(url, temp, qrcode, qrcodegen_Ecc_MEDIUM,
+            qrcodegen_VERSION_MIN, qrcodegen_VERSION_MAX, qrcodegen_Mask_AUTO, true))
+        return 0;
+
+    size = qrcodegen_getSize(qrcode);
+    dim = size * RECOVERY_QR_MOD;
+    XSetForeground(dpy, gc, rgb(255, 255, 255));
+    XFillRectangle(dpy, canvas, gc, x, y, dim + 8, dim + 8);
+    XSetForeground(dpy, gc, rgb(0, 0, 0));
+    for (j = 0; j < size; j++) {
+        for (i = 0; i < size; i++) {
+            if (qrcodegen_getModule(qrcode, i, j))
+                XFillRectangle(dpy, canvas, gc,
+                    x + 4 + i * RECOVERY_QR_MOD, y + 4 + j * RECOVERY_QR_MOD,
+                    RECOVERY_QR_MOD, RECOVERY_QR_MOD);
+        }
+    }
+    return dim + 8;
+}
+
+static void recovery_menu_rows(int *cmd_y, int *guide_y, int *power_y) {
+    int y = PAD + 120;
+
+    *cmd_y = y;
+    *guide_y = y + RECOVERY_ROW_H + 10;
+    *power_y = y + (RECOVERY_ROW_H + 10) * 2;
+}
+
+static void draw_recovery_menu(void) {
+    const char *title = "Recover your computer.";
+    const char *sub =
+        "If your computer isnt starting up, these options may help diagnose or repair your system.";
+    int tw;
+    int cmd_y, guide_y, power_y;
+
+    tw = text_width(font_head, title);
+    xft_draw(canvas, (WIN_W - tw) / 2, PAD + 28,
+        title, COL_TEXT_R, COL_TEXT_G, COL_TEXT_B, font_head);
+    xft_draw(canvas, PAD, PAD + 56, sub,
+        COL_MUTED_R, COL_MUTED_G, COL_MUTED_B, font_body);
+
+    recovery_menu_rows(&cmd_y, &guide_y, &power_y);
+    draw_recovery_row(cmd_y, "Command line", recovery_cmd_hover);
+    draw_recovery_row(guide_y, "Guide on installing Windows 11/Ubuntu", recovery_guide_hover);
+    draw_recovery_row(power_y, "Restart/shutdown", recovery_power_hover);
+
+    draw_metro_btn(PAD, WIN_H - PAD - BTN_H, BTN_W, BTN_H, "Back", recovery_back_hover, 0);
+}
+
+static void draw_recovery_guide(void) {
+    int qr_dim;
+    int gap = 48;
+    int total_w;
+    int x0;
+    int y = PAD + 72;
+    int label_y;
+
+    xft_draw(canvas, PAD, PAD + 24,
+        "Scan a QR code on another device to open an install guide:",
+        COL_TEXT_R, COL_TEXT_G, COL_TEXT_B, font_body);
+
+    qr_dim = 0;
+    {
+        uint8_t qrcode[qrcodegen_BUFFER_LEN_MAX];
+        uint8_t temp[qrcodegen_BUFFER_LEN_MAX];
+        int size;
+
+        if (qrcodegen_encodeText(WIN11_GUIDE_URL, temp, qrcode, qrcodegen_Ecc_MEDIUM,
+                qrcodegen_VERSION_MIN, qrcodegen_VERSION_MAX, qrcodegen_Mask_AUTO, true)) {
+            size = qrcodegen_getSize(qrcode);
+            qr_dim = size * RECOVERY_QR_MOD + 8;
+        }
+    }
+    if (qr_dim < 80)
+        qr_dim = 120;
+    total_w = qr_dim * 2 + gap;
+    x0 = (WIN_W - total_w) / 2;
+
+    draw_qr_code(x0, y, WIN11_GUIDE_URL);
+    draw_qr_code(x0 + qr_dim + gap, y, UBUNTU_GUIDE_URL);
+
+    label_y = y + qr_dim + 22;
+    {
+        const char *wlabel = "Windows 11";
+        const char *ulabel = "Ubuntu";
+        int ww = text_width(font_body, wlabel);
+        int uw = text_width(font_body, ulabel);
+
+        xft_draw(canvas, x0 + (qr_dim - ww) / 2, label_y,
+            wlabel, COL_TEXT_R, COL_TEXT_G, COL_TEXT_B, font_body);
+        xft_draw(canvas, x0 + qr_dim + gap + (qr_dim - uw) / 2, label_y,
+            ulabel, COL_TEXT_R, COL_TEXT_G, COL_TEXT_B, font_body);
+    }
+
+    xft_draw(canvas, PAD, label_y + 28, WIN11_GUIDE_URL,
+        COL_MUTED_R, COL_MUTED_G, COL_MUTED_B, font_body);
+    xft_draw(canvas, PAD, label_y + 28 + (font_body ? font_body->height + 4 : 18),
+        UBUNTU_GUIDE_URL, COL_MUTED_R, COL_MUTED_G, COL_MUTED_B, font_body);
+
+    draw_metro_btn(PAD, WIN_H - PAD - BTN_H, BTN_W, BTN_H, "Back", recovery_back_hover, 0);
+}
+
+static void draw_recovery_power(void) {
+    int y = WIN_H / 2 - RECOVERY_ROW_H - 8;
+    int restart_y = y;
+    int shutdown_y = y + RECOVERY_ROW_H + 12;
+
+    xft_draw(canvas, PAD, PAD + 24, "Restart or shut down this computer:",
+        COL_TEXT_R, COL_TEXT_G, COL_TEXT_B, font_body);
+    draw_recovery_row(restart_y, "Restart", recovery_restart_hover);
+    draw_recovery_row(shutdown_y, "Shut down", recovery_shutdown_hover);
+    draw_metro_btn(PAD, WIN_H - PAD - BTN_H, BTN_W, BTN_H, "Back", recovery_back_hover, 0);
+}
+
+static void draw_recovery(void) {
+    switch (recovery_view) {
+    case RECOVERY_MENU:
+        draw_recovery_menu();
+        break;
+    case RECOVERY_GUIDE:
+        draw_recovery_guide();
+        break;
+    case RECOVERY_POWER:
+        draw_recovery_power();
+        break;
     }
 }
 
@@ -837,6 +1080,7 @@ static void draw_failed(void) {
         install_output_btn(&obx, &oby);
         draw_metro_btn(obx, oby, LOG_BTN_W, BTN_H, "View output", log_btn_hover, 0);
     }
+    draw_recovery_link();
 }
 
 static void draw_all_done(void) {
@@ -882,6 +1126,9 @@ static void draw_all(void) {
         break;
     case STEP_FAILED:
         draw_failed();
+        break;
+    case STEP_RECOVERY:
+        draw_recovery();
         break;
     }
     present_frame();
@@ -956,7 +1203,59 @@ static void failed_shutdown_btn(int *bx, int *by) {
     *by = WIN_H - PAD - BTN_H;
 }
 
+static void handle_recovery_click(int x, int y) {
+    int cmd_y, guide_y, power_y;
+    int restart_y, shutdown_y;
+
+    if (point_in_rect(x, y, PAD, WIN_H - PAD - BTN_H, BTN_W, BTN_H)) {
+        if (recovery_view == RECOVERY_MENU)
+            exit_recovery();
+        else
+            recovery_view = RECOVERY_MENU;
+        return;
+    }
+
+    if (recovery_view == RECOVERY_MENU) {
+        recovery_menu_rows(&cmd_y, &guide_y, &power_y);
+        if (point_in_rect(x, y, PAD, cmd_y, RECOVERY_ROW_W, RECOVERY_ROW_H)) {
+            open_command_line();
+            return;
+        }
+        if (point_in_rect(x, y, PAD, guide_y, RECOVERY_ROW_W, RECOVERY_ROW_H)) {
+            recovery_view = RECOVERY_GUIDE;
+            return;
+        }
+        if (point_in_rect(x, y, PAD, power_y, RECOVERY_ROW_W, RECOVERY_ROW_H)) {
+            recovery_view = RECOVERY_POWER;
+            return;
+        }
+    } else if (recovery_view == RECOVERY_POWER) {
+        restart_y = WIN_H / 2 - RECOVERY_ROW_H - 8;
+        shutdown_y = restart_y + RECOVERY_ROW_H + 12;
+        if (point_in_rect(x, y, PAD, restart_y, RECOVERY_ROW_W, RECOVERY_ROW_H)) {
+            do_reboot();
+            return;
+        }
+        if (point_in_rect(x, y, PAD, shutdown_y, RECOVERY_ROW_W, RECOVERY_ROW_H)) {
+            do_shutdown();
+            return;
+        }
+    }
+}
+
 static void handle_click(int x, int y) {
+    if (step == STEP_RECOVERY) {
+        handle_recovery_click(x, y);
+        return;
+    }
+    if (show_recovery_link()) {
+        int rx, ry;
+        recovery_link_layout(&rx, &ry);
+        if (point_in_rect(x, y, rx, ry, RECOVERY_LINK_W, RECOVERY_LINK_H)) {
+            enter_recovery();
+            return;
+        }
+    }
     if (step == STEP_INSTALLING || step == STEP_FAILED) {
         int obx, oby;
         install_output_btn(&obx, &oby);
@@ -996,8 +1295,48 @@ static void handle_click(int x, int y) {
     }
 }
 
+static void update_recovery_hover(int x, int y) {
+    int cmd_y, guide_y, power_y;
+    int restart_y, shutdown_y;
+    int back = point_in_rect(x, y, PAD, WIN_H - PAD - BTN_H, BTN_W, BTN_H);
+    int cmd = 0, guide = 0, power = 0, restart = 0, shutdown = 0;
+
+    if (recovery_view == RECOVERY_MENU) {
+        recovery_menu_rows(&cmd_y, &guide_y, &power_y);
+        cmd = point_in_rect(x, y, PAD, cmd_y, RECOVERY_ROW_W, RECOVERY_ROW_H);
+        guide = point_in_rect(x, y, PAD, guide_y, RECOVERY_ROW_W, RECOVERY_ROW_H);
+        power = point_in_rect(x, y, PAD, power_y, RECOVERY_ROW_W, RECOVERY_ROW_H);
+    } else if (recovery_view == RECOVERY_POWER) {
+        restart_y = WIN_H / 2 - RECOVERY_ROW_H - 8;
+        shutdown_y = restart_y + RECOVERY_ROW_H + 12;
+        restart = point_in_rect(x, y, PAD, restart_y, RECOVERY_ROW_W, RECOVERY_ROW_H);
+        shutdown = point_in_rect(x, y, PAD, shutdown_y, RECOVERY_ROW_W, RECOVERY_ROW_H);
+    }
+
+    if (back != recovery_back_hover || cmd != recovery_cmd_hover ||
+        guide != recovery_guide_hover || power != recovery_power_hover ||
+        restart != recovery_restart_hover || shutdown != recovery_shutdown_hover) {
+        recovery_back_hover = back;
+        recovery_cmd_hover = cmd;
+        recovery_guide_hover = guide;
+        recovery_power_hover = power;
+        recovery_restart_hover = restart;
+        recovery_shutdown_hover = shutdown;
+        draw_all();
+    }
+}
+
 static void update_hover(int x, int y) {
-    int ns = 0, ni = 0, nb = 0, lo = 0;
+    int ns = 0, ni = 0, nb = 0, lo = 0, rl = 0;
+    if (step == STEP_RECOVERY) {
+        update_recovery_hover(x, y);
+        return;
+    }
+    if (show_recovery_link()) {
+        int rx, ry;
+        recovery_link_layout(&rx, &ry);
+        rl = point_in_rect(x, y, rx, ry, RECOVERY_LINK_W, RECOVERY_LINK_H);
+    }
     if (step == STEP_WELCOME) {
         int bx, by;
         welcome_install_btn(&bx, &by);
@@ -1014,17 +1353,20 @@ static void update_hover(int x, int y) {
         int bx, by;
         failed_shutdown_btn(&bx, &by);
         int sh = point_in_rect(x, y, bx, by, BTN_W, BTN_H);
-        if (sh != shutdown_btn_hover) {
+        if (sh != shutdown_btn_hover || rl != recovery_link_hover) {
             shutdown_btn_hover = sh;
+            recovery_link_hover = rl;
             draw_all();
         }
         return;
     }
-    if (ns != start_hover || ni != install_hover || nb != back_hover || lo != log_btn_hover) {
+    if (ns != start_hover || ni != install_hover || nb != back_hover || lo != log_btn_hover ||
+        rl != recovery_link_hover) {
         start_hover = ns;
         install_hover = ni;
         back_hover = nb;
         log_btn_hover = lo;
+        recovery_link_hover = rl;
         draw_all();
     }
 }
