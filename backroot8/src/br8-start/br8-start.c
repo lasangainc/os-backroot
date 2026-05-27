@@ -18,6 +18,8 @@
 #include <sys/stat.h>
 #include <pwd.h>
 
+#include "../../include/br8-metro.h"
+
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_NO_SIMD
 #include "stb_image.h"
@@ -48,6 +50,9 @@
 #define DRAG_THRESHOLD 6
 #define DRAG_SCALE 0.88
 #define TICK_MS 8
+#define METRO_FLIP_MS 420.0
+#define METRO_HOLD_MIN_MS 180.0
+#define METRO_READY_TIMEOUT_MS 15000.0
 #define COLOR_CACHE_MAX 512
 #define CTX_W 200
 #define CTX_H 36
@@ -141,6 +146,24 @@ static unsigned long pix_tile_hover_outline;
 
 static int frame_dirty;
 
+typedef enum {
+    METRO_LAUNCH_IDLE = 0,
+    METRO_LAUNCH_FLIP,
+    METRO_LAUNCH_SPLASH
+} MetroLaunchPhase;
+
+static MetroLaunchPhase metro_launch_phase;
+static struct timespec metro_launch_start;
+static int metro_src_x, metro_src_y, metro_src_w, metro_src_h;
+static int metro_launch_cr, metro_launch_cg, metro_launch_cb;
+static unsigned long metro_launch_fill;
+static Window metro_splash_win;
+static Pixmap metro_splash_pm;
+static Pixmap metro_tile_pm;
+static int metro_tile_pw, metro_tile_ph;
+static GC metro_splash_gc;
+static Atom br8_metro_active;
+
 static int dragging;
 static int drag_tile_idx;
 static int drag_pointer_x, drag_pointer_y;
@@ -176,6 +199,17 @@ static void rebuild_static_layer(void);
 static void present_buffer(void);
 static XRenderColor render_rgb(int r, int g, int b);
 static unsigned long rgb(int r, int g, int b);
+static void hide_menu_for_metro_launch(void);
+static void begin_metro_launch_rect(int sx, int sy, int sw, int sh,
+    int cr, int cg, int cb, unsigned long fill, const Tile *glyph_tile);
+static void tick_metro_launch(void);
+static int action_is_metro(Action act, const char *exec_cmd);
+static void do_spawn(Action act, const char *exec_cmd);
+static void launch_tile(int ti);
+static void draw_tile_glyph(Drawable dst, GC g, const Tile *t, int sx, int sy, int sw, int sh);
+static void draw_tile_label(Drawable dst, const Tile *t, int sx, int sy, int sh);
+static void tile_screen_rect(const Tile *t, int ti, int dragging_now,
+    int *sx, int *sy, int *sw, int *sh);
 
 static XRenderColor render_rgb(int r, int g, int b) {
     XRenderColor c;
@@ -272,6 +306,17 @@ static double ease_out_cubic(double t) {
         return 1.0;
     double u = 1.0 - t;
     return 1.0 - u * u * u;
+}
+
+static double ease_in_out_cubic(double t) {
+    if (t <= 0.0)
+        return 0.0;
+    if (t >= 1.0)
+        return 1.0;
+    if (t < 0.5)
+        return 4.0 * t * t * t;
+    double u = -2.0 * t + 2.0;
+    return 1.0 - (u * u * u) / 2.0;
 }
 
 static double open_timeline_ms(void) {
@@ -522,9 +567,17 @@ static void spawn_exec(const char *cmd) {
     _exit(1);
 }
 
-static void launch_action(Action act, const char *exec_cmd) {
-    if (visible)
-        begin_close_animation();
+static int action_is_metro(Action act, const char *exec_cmd) {
+    if (act == ACT_SETTINGS)
+        return 1;
+    if (act == ACT_EXEC && exec_cmd) {
+        if (strstr(exec_cmd, "br8-settings") || strstr(exec_cmd, "powerpdf"))
+            return 1;
+    }
+    return 0;
+}
+
+static void do_spawn(Action act, const char *exec_cmd) {
     switch (act) {
     case ACT_TERMINAL: spawn_terminal(); break;
     case ACT_DOLPHIN: spawn_dolphin(); break;
@@ -532,6 +585,237 @@ static void launch_action(Action act, const char *exec_cmd) {
     case ACT_DESKTOP: break;
     case ACT_EXEC: spawn_exec(exec_cmd); break;
     }
+}
+
+static int read_metro_active(void) {
+    Atom actual;
+    int fmt;
+    unsigned long n, bytes;
+    unsigned long *data = NULL;
+    int active = 0;
+    if (XGetWindowProperty(dpy, root, br8_metro_active, 0, 1, False, XA_CARDINAL,
+            &actual, &fmt, &n, &bytes, (unsigned char **)&data) == Success &&
+        data && n > 0 && data[0])
+        active = 1;
+    if (data)
+        XFree(data);
+    return active;
+}
+
+static int metro_launch_app_ready(void) {
+    return read_metro_active() && br8_metro_ready(dpy);
+}
+
+static void metro_launch_free_assets(void) {
+    if (metro_tile_pm) {
+        XFreePixmap(dpy, metro_tile_pm);
+        metro_tile_pm = 0;
+    }
+    metro_tile_pw = metro_tile_ph = 0;
+    if (metro_splash_pm) {
+        XFreePixmap(dpy, metro_splash_pm);
+        metro_splash_pm = 0;
+    }
+}
+
+static void metro_launch_ensure_pixmap(void) {
+    if (win_w < 1 || win_h < 1)
+        return;
+    int depth = DefaultDepth(dpy, screen);
+    if (!metro_splash_pm) {
+        metro_splash_pm = XCreatePixmap(dpy, root, win_w, win_h, depth);
+        return;
+    }
+    /* Recreate if size changed — checked by caller before draw */
+}
+
+static void metro_launch_present(void) {
+    if (!metro_splash_pm || !metro_splash_win)
+        return;
+    XCopyArea(dpy, metro_splash_pm, metro_splash_win, metro_splash_gc,
+        0, 0, win_w, win_h, 0, 0);
+    XRaiseWindow(dpy, metro_splash_win);
+    XFlush(dpy);
+}
+
+static Pixmap capture_tile_snapshot(const Tile *t, int w, int h) {
+    if (w < 1 || h < 1)
+        return 0;
+    int depth = DefaultDepth(dpy, screen);
+    Pixmap pm = XCreatePixmap(dpy, root, w, h, depth);
+    GC g = XCreateGC(dpy, pm, 0, NULL);
+    draw_tile_glyph(pm, g, t, 0, 0, w, h);
+    draw_tile_label(pm, t, 0, 0, h);
+    XFreeGC(dpy, g);
+    return pm;
+}
+
+static void draw_metro_splash_solid(void) {
+    XSetForeground(dpy, metro_splash_gc, metro_launch_fill);
+    XFillRectangle(dpy, metro_splash_pm, metro_splash_gc, 0, 0, win_w, win_h);
+}
+
+static void draw_metro_flip_frame(double t) {
+    double e = ease_in_out_cubic(t);
+    double angle = t * M_PI;
+    double c = fabs(cos(angle));
+
+    draw_metro_splash_solid();
+
+    if (angle >= M_PI / 2.0 - 0.02)
+        return;
+
+    int box_w = lerp_i(metro_src_w, win_w, e);
+    int box_h = lerp_i(metro_src_h, win_h, e);
+    int cx = lerp_i(metro_src_x + metro_src_w / 2, win_w / 2, e);
+    int cy = lerp_i(metro_src_y + metro_src_h / 2, win_h / 2, e);
+    int vis_w = (int)(box_w * c);
+    if (vis_w < 2)
+        return;
+
+    int x0 = cx - vis_w / 2;
+    int y0 = cy - box_h / 2;
+    if (y0 < 0)
+        y0 = 0;
+    if (y0 + box_h > win_h)
+        box_h = win_h - y0;
+
+    if (!metro_tile_pm || metro_tile_pw < 1 || metro_tile_ph < 1) {
+        XSetForeground(dpy, metro_splash_gc, metro_launch_fill);
+        XFillRectangle(dpy, metro_splash_pm, metro_splash_gc, x0, y0, vis_w, box_h);
+        return;
+    }
+
+    int src_w = (int)(metro_tile_pw * c);
+    if (src_w < 2)
+        return;
+    if (src_w > metro_tile_pw)
+        src_w = metro_tile_pw;
+    int src_x = (metro_tile_pw - src_w) / 2;
+    XCopyArea(dpy, metro_tile_pm, metro_splash_pm, metro_splash_gc,
+        src_x, 0, (unsigned)src_w, (unsigned)metro_tile_ph, x0, y0);
+}
+
+static void finish_metro_launch(void) {
+    if (metro_splash_win)
+        XUnmapWindow(dpy, metro_splash_win);
+    metro_launch_free_assets();
+    metro_launch_phase = METRO_LAUNCH_IDLE;
+    br8_clear_metro_ready(dpy);
+}
+
+static void hide_menu_for_metro_launch(void) {
+    menu_closing = 0;
+    dragging = 0;
+    drag_tile_idx = -1;
+    ctx_visible = 0;
+    hover_tile_idx = -1;
+    open_anim = 1.0;
+    layout_animating = 0;
+    frame_dirty = 0;
+    if (visible) {
+        XUnmapWindow(dpy, start_win);
+        visible = 0;
+        scroll_y = 0;
+        invalidate_static();
+    }
+    set_open(0);
+}
+
+static void begin_metro_launch_rect(int sx, int sy, int sw, int sh,
+    int cr, int cg, int cb, unsigned long fill, const Tile *glyph_tile) {
+    sync_start_win_size();
+    metro_launch_free_assets();
+    metro_src_x = sx;
+    metro_src_y = sy;
+    metro_src_w = sw > 0 ? sw : TILE;
+    metro_src_h = sh > 0 ? sh : TILE;
+    metro_launch_cr = cr;
+    metro_launch_cg = cg;
+    metro_launch_cb = cb;
+    metro_launch_fill = fill ? fill : rgb(cr, cg, cb);
+
+    metro_tile_pw = metro_src_w;
+    metro_tile_ph = metro_src_h;
+    if (glyph_tile)
+        metro_tile_pm = capture_tile_snapshot(glyph_tile, metro_tile_pw, metro_tile_ph);
+
+    metro_launch_ensure_pixmap();
+    br8_clear_metro_ready(dpy);
+    hide_menu_for_metro_launch();
+
+    metro_launch_phase = METRO_LAUNCH_FLIP;
+    clock_gettime(CLOCK_MONOTONIC, &metro_launch_start);
+    clock_gettime(CLOCK_MONOTONIC, &last_tick);
+
+    XMapRaised(dpy, metro_splash_win);
+    draw_metro_flip_frame(0.0);
+    metro_launch_present();
+}
+
+static void begin_metro_launch_from_tile(int ti) {
+    Tile *t = &home_tiles[ti];
+    int sx, sy, sw, sh;
+    tile_screen_rect(t, ti, 0, &sx, &sy, &sw, &sh);
+    begin_metro_launch_rect(sx, sy, sw, sh, t->cr, t->cg, t->cb, t->fill_pixel, t);
+}
+
+static void begin_metro_launch_from_app(const AppEntry *a, int icon_x, int icon_y) {
+    Tile tmp;
+    memset(&tmp, 0, sizeof(tmp));
+    snprintf(tmp.label, sizeof(tmp.label), "%s", a->name);
+    tmp.cr = a->cr;
+    tmp.cg = a->cg;
+    tmp.cb = a->cb;
+    tmp.letter = a->letter;
+    tmp.act = ACT_EXEC;
+    tmp.fill_pixel = rgb(a->cr, a->cg, a->cb);
+    begin_metro_launch_rect(icon_x, icon_y, APP_ICON, APP_ICON,
+        a->cr, a->cg, a->cb, tmp.fill_pixel, &tmp);
+}
+
+static void tick_metro_launch(void) {
+    if (metro_launch_phase == METRO_LAUNCH_IDLE)
+        return;
+
+    double elapsed = now_ms() - (metro_launch_start.tv_sec * 1000.0 +
+        metro_launch_start.tv_nsec / 1000000.0);
+
+    if (metro_launch_phase == METRO_LAUNCH_FLIP) {
+        double t = elapsed / METRO_FLIP_MS;
+        if (t >= 1.0) {
+            metro_launch_phase = METRO_LAUNCH_SPLASH;
+            clock_gettime(CLOCK_MONOTONIC, &metro_launch_start);
+            draw_metro_splash_solid();
+        } else {
+            draw_metro_flip_frame(t);
+        }
+        metro_launch_present();
+        return;
+    }
+
+    if (metro_launch_phase == METRO_LAUNCH_SPLASH) {
+        draw_metro_splash_solid();
+        metro_launch_present();
+        if (elapsed >= METRO_READY_TIMEOUT_MS) {
+            finish_metro_launch();
+            return;
+        }
+        if (elapsed >= METRO_HOLD_MIN_MS && metro_launch_app_ready())
+            finish_metro_launch();
+    }
+}
+
+static void launch_tile(int ti) {
+    Tile *t = &home_tiles[ti];
+    if (action_is_metro(t->act, t->exec_cmd)) {
+        begin_metro_launch_from_tile(ti);
+        do_spawn(t->act, t->exec_cmd);
+        return;
+    }
+    if (visible)
+        begin_close_animation();
+    do_spawn(t->act, t->exec_cmd);
 }
 
 static void trim(char *s) {
@@ -880,6 +1164,8 @@ static int apps_section_visible(void) {
 }
 
 static int animating_now(void) {
+    if (metro_launch_phase != METRO_LAUNCH_IDLE)
+        return 1;
     if (menu_closing)
         return 1;
     if (open_anim < 1.0)
@@ -962,6 +1248,10 @@ static void smooth_tiles(double dt_ms) {
 }
 
 static void tick_animations(void) {
+    if (metro_launch_phase != METRO_LAUNCH_IDLE) {
+        tick_metro_launch();
+        return;
+    }
     if (!visible)
         return;
 
@@ -1722,13 +2012,26 @@ static void handle_click(int x, int y) {
     if (!dragging) {
         int ti = tile_index_at_content(x, cy);
         if (ti >= 0) {
-            Tile *t = &home_tiles[ti];
-            launch_action(t->act, t->exec_cmd);
+            launch_tile(ti);
             return;
         }
         AppEntry *a = app_at_content(x, cy);
-        if (a)
-            launch_action(ACT_EXEC, a->exec_cmd);
+        if (a) {
+            if (action_is_metro(ACT_EXEC, a->exec_cmd)) {
+                int base_y = home_h;
+                int rel_y = cy - base_y - HEADER_H;
+                int row = rel_y / (APP_ROW_H + APP_GAP);
+                int col = (x - MARGIN) / APP_COL_W;
+                int ax = MARGIN + col * APP_COL_W;
+                int ay = base_y + HEADER_H + row * (APP_ROW_H + APP_GAP);
+                begin_metro_launch_from_app(a, ax, ay);
+                do_spawn(ACT_EXEC, a->exec_cmd);
+            } else {
+                if (visible)
+                    begin_close_animation();
+                do_spawn(ACT_EXEC, a->exec_cmd);
+            }
+        }
     }
 }
 
@@ -1751,6 +2054,12 @@ static void resize_to_root(void) {
     win_w = ra.width;
     win_h = root_h;
     XMoveResizeWindow(dpy, start_win, 0, 0, win_w, win_h);
+    if (metro_splash_win)
+        XMoveResizeWindow(dpy, metro_splash_win, 0, 0, win_w, win_h);
+    if (metro_splash_pm) {
+        XFreePixmap(dpy, metro_splash_pm);
+        metro_splash_pm = 0;
+    }
     invalidate_static();
     free_buffers();
     if (visible)
@@ -1882,6 +2191,7 @@ int main(void) {
     open_anim = 1.0;
 
     br8_start_open = XInternAtom(dpy, "_BR8_START_OPEN", False);
+    br8_metro_active = XInternAtom(dpy, "_BR8_METRO_ACTIVE", False);
     set_open(0);
 
     open_fonts();
@@ -1896,22 +2206,27 @@ int main(void) {
     win_h = root_h;
 
     start_win = XCreateSimpleWindow(dpy, root, 0, 0, win_w, win_h, 0, 0, pix_bg);
+    metro_splash_win = XCreateSimpleWindow(dpy, root, 0, 0, win_w, win_h, 0, 0, pix_bg);
     XSetWindowAttributes attr;
     attr.override_redirect = True;
     attr.event_mask = ExposureMask | StructureNotifyMask | ButtonPressMask |
         ButtonReleaseMask | PointerMotionMask | KeyPressMask;
     XChangeWindowAttributes(dpy, start_win, CWOverrideRedirect | CWEventMask, &attr);
+    attr.event_mask = ExposureMask | StructureNotifyMask;
+    XChangeWindowAttributes(dpy, metro_splash_win, CWOverrideRedirect | CWEventMask, &attr);
     gc = XCreateGC(dpy, start_win, 0, NULL);
+    metro_splash_gc = XCreateGC(dpy, metro_splash_win, 0, NULL);
     init_user_name();
     clock_gettime(CLOCK_MONOTONIC, &last_tick);
     XUnmapWindow(dpy, start_win);
+    XUnmapWindow(dpy, metro_splash_win);
     visible = 0;
 
     XSelectInput(dpy, root, PropertyChangeMask | StructureNotifyMask);
 
     int xfd = ConnectionNumber(dpy);
     while (1) {
-        int tick = visible && (animating_now() || frame_dirty);
+        int tick = animating_now() || frame_dirty;
         fd_set fds;
         FD_ZERO(&fds);
         FD_SET(xfd, &fds);
