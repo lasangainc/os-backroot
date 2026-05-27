@@ -19,7 +19,7 @@ fi
 
 # Live ISO install screen: blue desktop, no taskbar or start menu
 if [ "$LIVE_BOOT" = 1 ]; then
-    xsetroot -solid "#0078D4"
+    xsetroot -solid rgb:00/78/D4 2>/dev/null || xsetroot -solid rgb:0/120/212
 elif [ "$OOBE_LOADING" = 0 ]; then
     WALLPAPER=/usr/share/backgrounds/backroot8.jpg
     if [ -r "$HOME/.config/backroot8/wallpaper.jpg" ]; then
