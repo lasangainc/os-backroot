@@ -1132,6 +1132,7 @@ int main(void) {
     draw_all();
     XFlush(dpy);
     XMapRaised(dpy, win);
+    br8_signal_metro_ready(dpy);
 
     int running = 1;
     while (running) {

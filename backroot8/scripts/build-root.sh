@@ -162,5 +162,8 @@ BUILD_USER="${SUDO_USER:-${USER:-root}}"
 if [[ -n "$BUILD_USER" && "$BUILD_USER" != "root" ]]; then
     chown -R "$BUILD_USER:$BUILD_USER" "$ROOTFS" "$BOOTSTRAP" 2>/dev/null || true
 fi
+# sshd privilege separation dir must stay root-owned (chown -R above breaks it).
+chown root:root "$ROOTFS/usr/share/empty.sshd"
+chmod 755 "$ROOTFS/usr/share/empty.sshd"
 
 log "Root filesystem ready: $ROOTFS"

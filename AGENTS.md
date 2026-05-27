@@ -43,6 +43,7 @@ All product code lives under **`backroot8/`**. Repo root points to [`backroot8/R
 | `_BR8_ACTIVATE` | Panel on root | WINDOW = frame to restore (delete after read) |
 | `_BR8_METRO` | App on client | CARDINAL `1` — metro fullscreen app (no chrome) |
 | `_BR8_METRO_ACTIVE` | WM on root | CARDINAL `1` while any metro app is mapped (hides panel) |
+| `_BR8_METRO_READY` | App on root | CARDINAL `1` after first frame drawn — start splash dismisses |
 | `_BR8_START_OPEN` | Panel / br8-start | CARDINAL `0/1` — start menu visible |
 | `_NET_CLIENT_LIST` | WM on root | EWMH client list |
 

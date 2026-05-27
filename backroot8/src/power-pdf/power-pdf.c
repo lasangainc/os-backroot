@@ -565,6 +565,7 @@ int main(int argc, char **argv) {
         set_status("");
 
     draw_window();
+    br8_signal_metro_ready(dpy);
 
     int running = 1;
     while (running) {
