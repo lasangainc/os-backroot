@@ -28,7 +28,7 @@
 #define BTN_H 44
 #define BTN_W 160
 #define INSTALL_ROW_H 28
-#define CHECK_UTF8 "\xe2\x9c\x93"
+#define CHECK_SZ 14
 #define ROW_H 44
 #define MAX_DISKS 24
 #define TOS_LINES 8
@@ -187,6 +187,16 @@ static int text_width(XftFont *font, const char *text) {
         return 0;
     XftTextExtentsUtf8(dpy, font, (FcChar8 *)text, (int)strlen(text), &ext);
     return ext.xOff;
+}
+
+static void draw_checkmark(int cx, int cy) {
+    XSetForeground(dpy, gc, rgb(COL_ACCENT_R, COL_ACCENT_G, COL_ACCENT_B));
+    XSetLineAttributes(dpy, gc, 2, LineSolid, CapRound, JoinRound);
+    XDrawLine(dpy, canvas, gc, cx - CHECK_SZ / 2, cy,
+        cx - CHECK_SZ / 6, cy + CHECK_SZ / 2);
+    XDrawLine(dpy, canvas, gc, cx - CHECK_SZ / 6, cy + CHECK_SZ / 2,
+        cx + CHECK_SZ / 2, cy - CHECK_SZ / 3);
+    XSetLineAttributes(dpy, gc, 0, LineSolid, CapButt, JoinMiter);
 }
 
 static XftFont *open_font(const char *const *names) {
@@ -752,8 +762,7 @@ static void draw_install_steps(int y0, int overall_pct) {
         int baseline = y + text_baseline(INSTALL_ROW_H, font_body);
 
         if (done) {
-            xft_draw(canvas, x, baseline, CHECK_UTF8,
-                COL_ACCENT_R, COL_ACCENT_G, COL_ACCENT_B, font_body);
+            draw_checkmark(x + 10, baseline - 4);
             xft_draw(canvas, label_x, baseline, install_stages[i].label,
                 COL_TEXT_R, COL_TEXT_G, COL_TEXT_B, font_body);
         } else if (active) {

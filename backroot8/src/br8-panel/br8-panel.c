@@ -55,7 +55,6 @@ static Visual *visual;
 static Colormap xft_cmap;
 static int panel_w;
 static Atom br8_frame, br8_client, br8_panel_rev, br8_activate, br8_start_open;
-static Atom br8_metro_active;
 static Atom net_wm_icon, net_wm_name, utf8_string;
 static TaskBtn tasks[MAX_TASKS];
 static int ntasks;
@@ -927,22 +926,28 @@ static int read_start_open(void) {
     return open;
 }
 
-static int read_metro_active(void) {
-    Atom actual;
-    int fmt;
-    unsigned long n, bytes;
-    unsigned long *data = NULL;
-    int active = 0;
-    if (XGetWindowProperty(dpy, root, br8_metro_active, 0, 8, False, XA_CARDINAL,
-            &actual, &fmt, &n, &bytes, (unsigned char **)&data) == Success && data && n > 0)
-        active = data[0] ? 1 : 0;
-    if (data)
-        XFree(data);
-    return active;
+static int panel_viewable(void) {
+    XWindowAttributes wa;
+    if (!panel || !XGetWindowAttributes(dpy, panel, &wa))
+        return 0;
+    return wa.map_state == IsViewable;
+}
+
+static void write_panel_ready(void) {
+    if (!panel_viewable())
+        return;
+    mkdir("/run/br8-oobe", 1777);
+    chmod("/run/br8-oobe", 01777);
+    FILE *rf = fopen("/run/br8-oobe/panel-ready", "w");
+    if (rf) {
+        fputc('1', rf);
+        fclose(rf);
+    }
 }
 
 static void sync_panel_visibility(void) {
-    int hide = read_start_open() || read_metro_active();
+    /* Only hide for the start menu; metro fullscreen apps cover the bar anyway. */
+    int hide = read_start_open();
     if (hide && !start_menu_open) {
         XUnmapWindow(dpy, panel);
         start_menu_open = 1;
@@ -950,6 +955,11 @@ static void sync_panel_visibility(void) {
         start_menu_open = 0;
         XMapRaised(dpy, panel);
         draw_panel();
+        write_panel_ready();
+    } else if (!hide && !panel_viewable()) {
+        XMapRaised(dpy, panel);
+        draw_panel();
+        write_panel_ready();
     }
 }
 
@@ -988,7 +998,6 @@ int main(void) {
     br8_panel_rev = XInternAtom(dpy, "_BR8_PANEL_REV", False);
     br8_activate = XInternAtom(dpy, "_BR8_ACTIVATE", False);
     br8_start_open = XInternAtom(dpy, "_BR8_START_OPEN", False);
-    br8_metro_active = XInternAtom(dpy, "_BR8_METRO_ACTIVE", False);
     net_wm_icon = XInternAtom(dpy, "_NET_WM_ICON", False);
     net_wm_name = XInternAtom(dpy, "_NET_WM_NAME", False);
     utf8_string = XInternAtom(dpy, "UTF8_STRING", False);
@@ -1012,19 +1021,11 @@ int main(void) {
     XMapRaised(dpy, panel);
     draw_panel();
     sync_panel_visibility();
-    if (!read_start_open() && !read_metro_active()) {
+    if (!read_start_open()) {
         XMapRaised(dpy, panel);
         draw_panel();
     }
-    {
-        mkdir("/run/br8-oobe", 1777);
-        chmod("/run/br8-oobe", 01777);
-        FILE *rf = fopen("/run/br8-oobe/panel-ready", "w");
-        if (rf) {
-            fputc('1', rf);
-            fclose(rf);
-        }
-    }
+    write_panel_ready();
     last_rev = read_panel_rev();
 
     int xfd = ConnectionNumber(dpy);
@@ -1042,6 +1043,8 @@ int main(void) {
                 draw_panel();
         }
         sync_panel_visibility();
+        if (!read_start_open())
+            write_panel_ready();
 
         while (XPending(dpy)) {
             XEvent ev;
@@ -1065,8 +1068,7 @@ int main(void) {
                     last_rev = read_panel_rev();
                     if (!start_menu_open)
                         draw_panel();
-                } else if (ev.xproperty.atom == br8_start_open ||
-                           ev.xproperty.atom == br8_metro_active) {
+                } else if (ev.xproperty.atom == br8_start_open) {
                     sync_panel_visibility();
                 }
             }

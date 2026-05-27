@@ -31,23 +31,19 @@ fi
 /usr/share/backroot8/br8-panel-launcher.sh &
 PANEL_PID=$!
 
-# Start menu overlay (Home / Apps launcher)
-( while true; do /usr/local/bin/br8-start; sleep 1; done ) &
+# Start menu overlay (Home / Apps launcher) — keep one long-lived instance
+/usr/local/bin/br8-start &
 
 # Live USB/ISO: install wizard (metro window)
 if /usr/lib/backroot8/is-live-boot.sh; then
     /usr/local/bin/br8-install &
 fi
 
-# First boot after install: OOBE (fullscreen metro)
-if [ -f /etc/backroot8/oobe-pending ] && ! /usr/lib/backroot8/is-live-boot.sh; then
-    /usr/local/bin/br8-oobe &
-fi
-
-# Default terminal (skip during live install wizard or OOBE)
-if ! /usr/lib/backroot8/is-live-boot.sh && [ ! -f /etc/backroot8/oobe-pending ]; then
-    xterm -fa Monospace -fs 11 -bg "#1a1a22" -fg "#e8e8ec" \
-        -title "${USER:-root}@Backroot8" -e /bin/bash -l &
+# First boot after install, or live debug: OOBE (fullscreen metro)
+if [ -f /etc/backroot8/oobe-pending ]; then
+    if [ -f /etc/backroot8/oobe-debug ] || ! /usr/lib/backroot8/is-live-boot.sh; then
+        /usr/local/bin/br8-oobe &
+    fi
 fi
 
 /usr/lib/backroot8/br8-plymouth-quit.sh &
@@ -58,6 +54,7 @@ if [ "$OOBE_LOADING" = 1 ]; then
         [ -f /run/br8-oobe/panel-ready ] && break
         sleep 0.2
     done
+    rm -f /run/br8-oobe/keep-loading
 fi
 
 # Window manager (exec keeps the X session alive; OOBE loading overlay stays above until panel is up)

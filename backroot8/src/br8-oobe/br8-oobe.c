@@ -57,9 +57,11 @@
 #define INTRO_OUT_MS 550
 #define PAGE_TRANS_MS 420
 #define CARET_BLINK_MS 530
+#define LOADING_STATUS "/run/br8-oobe/loading-status"
+#define LOADING_REBOOT_MSG "Your computer will perform a full reboot."
+#define OOBE_DEBUG "/etc/backroot8/oobe-debug"
 
 #define SETUP_SCRIPT "/usr/lib/backroot8/br8-oobe-setup.sh"
-#define FINISH_LOGIN_SCRIPT "/usr/lib/backroot8/br8-oobe-finish-login.sh"
 #define KEEP_LOADING "/run/br8-oobe/keep-loading"
 #define PANEL_READY "/run/br8-oobe/panel-ready"
 #define WALLPAPER_CHOICE "/run/br8-oobe/wallpaper"
@@ -100,7 +102,8 @@ static GC gc;
 static Visual *visual;
 static Colormap cmap;
 static int win_w, win_h;
-static XftFont *font_header, *font_sub, *font_label, *font_field, *font_btn;
+static XftFont *font_header, *font_intro, *font_sub, *font_label, *font_field, *font_btn;
+static char account_error[96];
 static Phase phase = PHASE_INTRO;
 static AnimState anim = ANIM_INTRO_IN;
 static Phase page_from = PHASE_PERSONALIZE;
@@ -251,9 +254,15 @@ static XftFont *open_font(const char *const *names) {
 
 static void open_fonts(void) {
     static const char *const header_names[] = {
-        "Segoe UI Light-42:antialias=true",
-        "Segoe UI-36:antialias=true",
-        "DejaVu Sans-36",
+        "Segoe UI Light-32:antialias=true",
+        "Segoe UI-28:antialias=true",
+        "DejaVu Sans-28",
+        NULL
+    };
+    static const char *const intro_names[] = {
+        "Segoe UI Light-28:antialias=true",
+        "Segoe UI-24:antialias=true",
+        "DejaVu Sans-24",
         NULL
     };
     static const char *const sub_names[] = {
@@ -278,6 +287,7 @@ static void open_fonts(void) {
         NULL
     };
     font_header = open_font(header_names);
+    font_intro = open_font(intro_names);
     font_sub = open_font(sub_names);
     font_label = open_font(label_names);
     font_field = open_font(field_names);
@@ -286,6 +296,10 @@ static void open_fonts(void) {
 
 static int oobe_pending(void) {
     return access("/etc/backroot8/oobe-pending", F_OK) == 0;
+}
+
+static int oobe_debug_live(void) {
+    return access(OOBE_DEBUG, F_OK) == 0;
 }
 
 static int is_live_boot(void) {
@@ -487,22 +501,23 @@ static void draw_intro(int ox, double alpha) {
     const char *pers = "Personalize";
     const char *sign = "Sign in";
     int sub_h = font_sub ? font_sub->height : 22;
-    int hdr_h = font_header ? font_header->height : 48;
+    XftFont *intro_font = font_intro ? font_intro : font_sub;
+    int intro_h = intro_font ? intro_font->height : 28;
 
     xft_draw_alpha(canvas, PAD + ox, PAD + text_baseline(sub_h, font_sub),
         header, COL_MUTED_R, COL_MUTED_G, COL_MUTED_B, font_sub, alpha);
 
     int mid_y = win_h / 2;
-    int pers_w = text_width(font_header, pers);
-    int sign_w = text_width(font_header, sign);
+    int pers_w = text_width(intro_font, pers);
+    int sign_w = text_width(intro_font, sign);
     int pers_x = win_w / 4 - pers_w / 2 + ox;
     int sign_x = (win_w * 3) / 4 - sign_w / 2 + ox;
-    int label_y = mid_y + text_baseline(hdr_h, font_header);
+    int label_y = mid_y + text_baseline(intro_h, intro_font);
 
     xft_draw_alpha(canvas, pers_x, label_y, pers,
-        COL_TEXT_R, COL_TEXT_G, COL_TEXT_B, font_header, alpha);
+        COL_TEXT_R, COL_TEXT_G, COL_TEXT_B, intro_font, alpha);
     xft_draw_alpha(canvas, sign_x, label_y, sign,
-        COL_TEXT_R, COL_TEXT_G, COL_TEXT_B, font_header, alpha);
+        COL_TEXT_R, COL_TEXT_G, COL_TEXT_B, intro_font, alpha);
 }
 
 static void draw_personalize(int ox, double alpha) {
@@ -586,23 +601,52 @@ static void draw_account(int ox, double alpha) {
     draw_field_box(PAD + LABEL_W + ox, row_pass2, password2, NULL, 1, focus == FOCUS_PASS2);
 
     draw_finish_btn(btn_x + ox, btn_y, "Finish", finish_hover, alpha);
+    if (account_error[0]) {
+        int err_y = btn_y - 28;
+        xft_draw_alpha(canvas, PAD + ox, err_y, account_error,
+            255, 180, 120, font_sub, alpha);
+    }
+}
+
+static const char *loading_subtitle(void) {
+    static char buf[128];
+    FILE *fp = fopen(LOADING_STATUS, "r");
+    if (!fp)
+        return "This can take a while... But it will be worth it!";
+    if (!fgets(buf, sizeof buf, fp)) {
+        fclose(fp);
+        return "This can take a while... But it will be worth it!";
+    }
+    fclose(fp);
+    size_t n = strlen(buf);
+    while (n > 0 && (buf[n - 1] == '\n' || buf[n - 1] == '\r'))
+        buf[--n] = '\0';
+    return buf[0] ? buf : "This can take a while... But it will be worth it!";
 }
 
 static void draw_loading(void) {
     const char *main_text = "We are setting your computer up.";
-    const char *sub_text = "This can take a while... But it will be worth it!";
+    const char *step_text = loading_subtitle();
+    const char *reboot_text = LOADING_REBOOT_MSG;
 
+    int header_h = font_header ? font_header->height : 42;
+    int sub_h = font_sub ? font_sub->height : 22;
     int mw = text_width(font_header, main_text);
-    int sw = text_width(font_sub, sub_text);
-    int cy = win_h / 2;
+    int sw = text_width(font_sub, step_text);
+    int rw = text_width(font_sub, reboot_text);
 
-    xft_draw(canvas, (win_w - mw) / 2,
-        cy + text_baseline(font_header ? font_header->height : 42, font_header),
+    int block_h = header_h + 28 + sub_h + 32 + sub_h;
+    int y0 = win_h / 2 - block_h / 2;
+
+    xft_draw(canvas, (win_w - mw) / 2, y0 + text_baseline(header_h, font_header),
         main_text, COL_TEXT_R, COL_TEXT_G, COL_TEXT_B, font_header);
 
-    xft_draw(canvas, (win_w - sw) / 2,
-        cy + (font_header ? font_header->height : 42) + 36,
-        sub_text, COL_MUTED_R, COL_MUTED_G, COL_MUTED_B, font_sub);
+    xft_draw(canvas, (win_w - sw) / 2, y0 + header_h + 28 + text_baseline(sub_h, font_sub),
+        step_text, COL_MUTED_R, COL_MUTED_G, COL_MUTED_B, font_sub);
+
+    xft_draw(canvas, (win_w - rw) / 2,
+        y0 + header_h + 28 + sub_h + 32 + text_baseline(sub_h, font_sub),
+        reboot_text, COL_TEXT_R, COL_TEXT_G, COL_TEXT_B, font_sub);
 
     int dots = ((int)(loading_anim * 2.0)) % 4;
     char dotbuf[8] = "";
@@ -610,7 +654,7 @@ static void draw_loading(void) {
         strcat(dotbuf, ".");
     int dw = text_width(font_sub, dotbuf);
     xft_draw(canvas, (win_w - dw) / 2,
-        cy + (font_header ? font_header->height : 42) + 72,
+        y0 + block_h + 16,
         dotbuf, COL_MUTED_R, COL_MUTED_G, COL_MUTED_B, font_sub);
 }
 
@@ -741,20 +785,38 @@ static int valid_username(const char *s) {
     return 1;
 }
 
-static int passwords_ok(void) {
-    if (strcmp(password, password2) != 0)
+static int account_ready(char *err, size_t errsz) {
+    if (!valid_username(username)) {
+        snprintf(err, errsz, "Enter a user name (letters, numbers, _ or -).");
         return 0;
-    if (!password[0])
-        return 1;
-    return strlen(password) >= 4;
+    }
+    if (password[0] && strcmp(password, password2) != 0) {
+        snprintf(err, errsz, "Passwords do not match.");
+        return 0;
+    }
+    return 1;
 }
 
 static void start_setup(void) {
-    if (!valid_username(username) || !passwords_ok())
+    char err[96];
+    if (!account_ready(err, sizeof err)) {
+        snprintf(account_error, sizeof account_error, "%s", err);
+        draw_all();
         return;
+    }
+    account_error[0] = '\0';
 
     save_wallpaper_choice();
     phase = PHASE_LOADING;
+    mkdir("/run/br8-oobe", 1777);
+    chmod("/run/br8-oobe", 01777);
+    {
+        FILE *st = fopen(LOADING_STATUS, "w");
+        if (st) {
+            fputs("Creating your account...\n", st);
+            fclose(st);
+        }
+    }
     draw_all();
 
     char pass_file[128];
@@ -834,6 +896,7 @@ static void handle_key(XKeyEvent *kev) {
     if (phase != PHASE_ACCOUNT)
         return;
 
+    account_error[0] = '\0';
     char *field = active_field();
     if (!field)
         return;
@@ -885,6 +948,7 @@ static void handle_click(int x, int y) {
     if (phase != PHASE_ACCOUNT)
         return;
 
+    account_error[0] = '\0';
     int title_y, row_user, row_pass, row_pass2, btn_x, btn_y;
     account_layout(&title_y, &row_user, &row_pass, &row_pass2, &btn_x, &btn_y);
     (void)title_y;
@@ -942,32 +1006,6 @@ static void resize_window(int w, int h) {
     draw_all();
 }
 
-static void finish_login(void) {
-    if (access(FINISH_LOGIN_SCRIPT, X_OK) == 0) {
-        pid_t pid = fork();
-        if (pid == 0) {
-            execl(FINISH_LOGIN_SCRIPT, FINISH_LOGIN_SCRIPT, (char *)NULL);
-            _exit(127);
-        }
-    }
-}
-
-static int root_cardinal(const char *name) {
-    Atom atom = XInternAtom(dpy, name, False);
-    Atom actual;
-    int fmt;
-    unsigned long n, bytes;
-    unsigned long *data = NULL;
-    int v = 0;
-    if (XGetWindowProperty(dpy, root, atom, 0, 8, False, XA_CARDINAL,
-            &actual, &fmt, &n, &bytes, (unsigned char **)&data) == Success &&
-        data && n > 0)
-        v = data[0] ? 1 : 0;
-    if (data)
-        XFree(data);
-    return v;
-}
-
 static void clear_metro_active(void) {
     Atom atom = XInternAtom(dpy, "_BR8_METRO_ACTIVE", False);
     unsigned long v = 0;
@@ -981,7 +1019,7 @@ static int panel_is_ready(void) {
 }
 
 static int loading_handoff_done(void) {
-    return panel_is_ready() && !root_cardinal("_BR8_METRO_ACTIVE");
+    return panel_is_ready();
 }
 
 static void clear_loading_state(void) {
@@ -1014,11 +1052,13 @@ static int run_event_loop(int until_panel) {
 
         if (until_panel && loading_handoff_done()) {
             clear_loading_state();
+            unlink(LOADING_STATUS);
             running = 0;
             continue;
         }
         if (until_panel && time(NULL) - start > 120) {
             clear_loading_state();
+            unlink(LOADING_STATUS);
             running = 0;
             continue;
         }
@@ -1028,8 +1068,17 @@ static int run_event_loop(int until_panel) {
             if (waitpid(setup_pid, &st, WNOHANG) > 0) {
                 setup_pid = 0;
                 unlink("/run/br8-oobe/pass");
-                finish_login();
-                running = 0;
+                if (WIFEXITED(st) && WEXITSTATUS(st) == 0) {
+                    /* setup.sh triggers a full reboot; keep splash until shutdown */
+                    phase = PHASE_LOADING;
+                    draw_all();
+                } else {
+                    snprintf(account_error, sizeof account_error,
+                        "Could not create your account. Try again.");
+                    phase = PHASE_ACCOUNT;
+                    input_blocked = 0;
+                    draw_all();
+                }
             }
         }
 
@@ -1106,7 +1155,9 @@ int main(int argc, char **argv) {
         return 0;
     }
 
-    if (is_live_boot() || !oobe_pending())
+    if (!oobe_pending())
+        return 0;
+    if (is_live_boot() && !oobe_debug_live())
         return 0;
 
     if (open_display_window())
