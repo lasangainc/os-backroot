@@ -23,6 +23,7 @@ apt-get install -y -qq \
     libfreetype-dev \
     libx11-dev \
     libxft-dev \
+    libxcursor-dev \
     pkg-config \
     python3-pil
 
