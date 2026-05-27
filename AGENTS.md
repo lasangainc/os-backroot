@@ -11,7 +11,7 @@ Guide for AI agents working on **os-backroot** / **Backroot 8**: a minimal X11 d
 | **Panel** | `br8-panel` — C, Xlib only |
 | **Session** | `startx` → `xinitrc` → panel + xterm + `exec br8-wm` |
 | **Default branch** | `main` |
-| **Feature work** | `cursor/<name>-4238` (cloud agent convention) |
+| **Feature work** | `cursor/<name>-01a3` (cloud agent convention) |
 
 All product code lives under **`backroot8/`**. Repo root points to [`backroot8/README.md`](backroot8/README.md).
 
@@ -29,7 +29,8 @@ All product code lives under **`backroot8/`**. Repo root points to [`backroot8/R
 │  └───────────────────────────────────────────────────┘  │
 │  systemd: backroot8-desktop.service → startx            │
 └─────────────────────────────────────────────────────────┘
-         ▲ VNC :5902          ▲ noVNC http://localhost:6080
+    ▲ guest x11vnc :5900 ──SSH tunnel──▶ host :5903
+    ▲ websockify ──────────────────────▶ noVNC :6080
 ```
 
 ### WM ↔ panel protocol (private atoms)
@@ -62,12 +63,139 @@ backroot8/
 │   ├── build-root.sh        # vm/rootfs/ (pacstrap + overlay)
 │   ├── build-iso.sh         # vm/backroot8-live.iso
 │   ├── sync-overlay.sh      # Binaries + overlay into rootfs
-│   ├── verify-iso-boot.sh     # Headless QEMU boot test
+│   ├── verify-iso-boot.sh   # Headless QEMU boot test
 │   ├── run-vm.sh            # QEMU from ISO + VNC
-│   └── run-vm-gui.sh        # run-vm + noVNC :6080
+│   └── run-vm-gui.sh        # run-vm + guest x11vnc + noVNC :6080
 └── vm/                      # Gitignored build artifacts
     ├── rootfs/
-    └── backroot8-live.iso
+    ├── backroot8-live.iso
+    ├── novnc.url            # Written by run-vm-gui.sh
+    ├── qemu.pid
+    └── websockify.pid
+```
+
+## noVNC + live ISO (agent playbook)
+
+Use this section whenever you need a browser-testable desktop. **Do not reinvent the steps** — run the script from repo root.
+
+### What `run-vm-gui.sh` does
+
+1. Boots QEMU from `backroot8/vm/backroot8-live.iso` (creates `vm/qemu.pid`).
+2. Waits for guest SSH on **host port 2222** (password `backroot8`).
+3. Starts **x11vnc** inside the guest on `:0`, forwards it to **127.0.0.1:5903**.
+4. Runs **websockify** + noVNC on **0.0.0.0:6080** → VNC port 5903.
+5. Writes the browser URL to `backroot8/vm/novnc.url`.
+
+QEMU also exposes VGA VNC on **5902** as a fallback; the script prefers the guest desktop tunnel when SSH is up.
+
+### Quick status (run from repo root)
+
+```bash
+# ISO present?
+test -f backroot8/vm/backroot8-live.iso && echo "ISO ok" || echo "BUILD ISO FIRST"
+
+# noVNC up?
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:6080/
+
+# QEMU up?
+test -f backroot8/vm/qemu.pid && ps -p "$(cat backroot8/vm/qemu.pid)" -o comm= 2>/dev/null | grep -q qemu-system && echo "QEMU ok"
+```
+
+Expect **`200`** from curl when noVNC is serving.
+
+### First-time setup (no ISO yet)
+
+From **repository root** (`/workspace` or clone root):
+
+```bash
+mkdir -p backroot8/vm
+cd backroot8
+sudo ./scripts/install-iso-build-deps.sh   # once per host
+sudo ./scripts/build-root.sh               # vm/rootfs/ — slow (pacstrap)
+sudo ./scripts/build-iso.sh                # vm/backroot8-live.iso
+cd ..
+./backroot8/scripts/run-vm-gui.sh
+```
+
+- Requires **network** and **sudo**.
+- `vm/` must exist before bootstrap download.
+- Chroot uses `DisableSandbox` in pacman.conf (Landlock fails on some hosts).
+- Kernel cmdline `backroot8iso` triggers mkinitcpio hooks in `rootfs-overlay/etc/initcpio/`.
+- **No KVM** in Cloud Agent VMs — TCG boot is slow (several minutes to desktop).
+
+### Every task after code changes
+
+| Change type | Action |
+|-------------|--------|
+| WM/panel C only | Hot-deploy (below); keep VM running |
+| `rootfs-overlay/`, packages, initcpio | Rebuild rootfs + ISO, then restart QEMU |
+| Broken/black session | `FORCE=1 ./backroot8/scripts/run-vm-gui.sh` |
+
+**End state:** `./backroot8/scripts/run-vm-gui.sh` has been run and `curl` returns **200** on port **6080**. Leave it running unless you had to rebuild the ISO.
+
+### Browser URL
+
+**On the agent machine:**
+
+```text
+http://127.0.0.1:6080/vnc.html?autoconnect=1&resize=scale&path=websockify
+```
+
+Also in `backroot8/vm/novnc.url` after `run-vm-gui.sh`.
+
+**Cursor / remote developers:** open the forwarded port from the **Ports** tab (forward **6080**). Do not use `localhost` on your own PC. If autoconnect fails over HTTPS, use the hash URL printed by the script (`encrypt=1`).
+
+### Restart QEMU (after ISO rebuild or wedged guest)
+
+```bash
+pkill -f 'qemu-system-x86_64.*-name backroot8' || true
+rm -f backroot8/vm/qemu.pid backroot8/vm/websockify.pid backroot8/vm/vnc-tunnel.pid
+./backroot8/scripts/run-vm-gui.sh
+# or: FORCE=1 ./backroot8/scripts/run-vm-gui.sh
+```
+
+### Hot-deploy binaries (WM/panel only — no ISO rebuild)
+
+VM must already be running with SSH reachable:
+
+```bash
+sshpass -p backroot8 ssh -p 2222 -o StrictHostKeyChecking=no root@127.0.0.1 \
+  'systemctl stop backroot8-desktop'
+scp -P 2222 -o StrictHostKeyChecking=no \
+  backroot8/src/br8-wm/br8-wm backroot8/src/br8-panel/br8-panel \
+  root@127.0.0.1:/usr/local/bin/
+sshpass -p backroot8 ssh -p 2222 -o StrictHostKeyChecking=no root@127.0.0.1 \
+  'systemctl start backroot8-desktop'
+```
+
+Guest SSH: `ssh -p 2222 root@127.0.0.1` — password **`backroot8`**.
+
+### noVNC troubleshooting
+
+| Symptom | Check | Fix |
+|---------|--------|-----|
+| `ISO not found` | `ls backroot8/vm/backroot8-live.iso` | Run `build-root.sh` + `build-iso.sh` |
+| `build-root.sh` failed at `br8-wm` | `ft2build.h` / empty `CFLAGS` | Host needs `libxcursor-dev` (see `install-iso-build-deps.sh`). Finish rootfs with the [recovery commands](#recover-after-partial-build-root) below |
+| Guest **emergency mode** / SSH hangs | `tail vm/serial.log` | Initramfs likely stale: run [recovery commands](#recover-after-partial-build-root) |
+| curl not `200` | `cat backroot8/vm/websockify.log` | Re-run `run-vm-gui.sh`; install `novnc` + `websockify` if missing |
+| Blank/no desktop | Wait 3–5 min (TCG); or SSH in | `systemctl status backroot8-desktop`; see x11vnc warning in script output |
+| VGA only (script warns) | Guest X not up yet | Wait; confirm `/tmp/.X11-unix/X0` via SSH |
+| Stale QEMU | `vm/qemu.pid` zombie | `pkill` + `FORCE=1` as above |
+
+Host packages for GUI testing (if not already installed): `qemu-system-x86`, `novnc`, `websockify`, `sshpass` — `install-iso-build-deps.sh` covers ISO build tools; `run-vm-gui.sh` can `apt-get install` novnc/sshpass on demand.
+
+### Recover after partial `build-root.sh`
+
+If `build-root.sh` exits during `sync-overlay` (common when `libxcursor-dev` is missing), the rootfs and initramfs are incomplete. From `backroot8/`:
+
+```bash
+sudo ./scripts/sync-overlay.sh ./vm/rootfs
+sudo arch-chroot ./vm/rootfs systemctl enable \
+  plymouth-start.service backroot8-fb-splash.service backroot8-live-cow.service \
+  backroot8-desktop.service sshd
+sudo arch-chroot ./vm/rootfs mkinitcpio -P
+sudo ./scripts/build-iso.sh
+cd .. && ./backroot8/scripts/run-vm-gui.sh
 ```
 
 ## Common tasks
@@ -92,43 +220,7 @@ sudo ./scripts/build-root.sh               # vm/rootfs/
 sudo ./scripts/build-iso.sh                # vm/backroot8-live.iso
 ```
 
-- Network + `sudo` required; Arch bootstrap tarball auto-downloads to `vm/`.
-- Chroot uses `DisableSandbox` in `pacman.conf` (Landlock fails on some hosts).
-- Kernel cmdline `backroot8iso` triggers mkinitcpio hooks in `rootfs-overlay/etc/initcpio/`.
-
-### Run VM for manual testing
-
-```bash
-./backroot8/scripts/run-vm-gui.sh
-```
-
-Browser: `http://localhost:6080/vnc.html?autoconnect=1&resize=scale`  
-SSH: `ssh -p 2222 root@localhost` password `backroot8`
-
-### Post-task: noVNC for developer testing
-
-1. **Goal:** QEMU running with noVNC on port **6080**.
-2. **If already up** and guest reflects your changes (hot-deploy), do not restart unnecessarily.
-3. **If not running:** `./backroot8/scripts/run-vm-gui.sh` (requires existing ISO; build first if missing).
-4. **Restart QEMU** after ISO rebuild or broken session:
-
-```bash
-pkill -f 'qemu-system-x86_64.*-name backroot8' || true
-rm -f backroot8/vm/qemu.pid backroot8/vm/websockify.pid
-./backroot8/scripts/run-vm-gui.sh
-```
-
-5. In PRs, include the test URL above.
-
-Quick check: `curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:6080/` → `200`.
-
-### Hot-deploy binaries into running VM
-
-```bash
-sshpass -p backroot8 ssh -p 2222 root@127.0.0.1 'systemctl stop backroot8-desktop'
-scp backroot8/src/br8-wm/br8-wm backroot8/src/br8-panel/br8-panel root@127.0.0.1:/usr/local/bin/
-ssh -p 2222 root@127.0.0.1 'systemctl start backroot8-desktop'
-```
+Then start the GUI test environment: `./backroot8/scripts/run-vm-gui.sh` (see [noVNC + live ISO](#novnc--live-iso-agent-playbook)).
 
 ## UI behavior (do not regress)
 
@@ -165,7 +257,7 @@ After WM/panel or overlay changes:
 2. `sudo ./scripts/build-root.sh && sudo ./scripts/build-iso.sh` if overlay/systemd/initcpio changed; else hot-deploy.
 3. `./scripts/verify-iso-boot.sh` when initramfs or ISO layout changed.
 4. In noVNC: drag, min/max/close, root menu, minimize → taskbar restore; two terminals → two icons.
-5. Leave noVNC up when finishing unless restart is required.
+5. Leave noVNC up when finishing unless restart is required ([playbook](#novnc--live-iso-agent-playbook)).
 
 ## References
 
@@ -177,19 +269,29 @@ After WM/panel or overlay changes:
 
 ### Host dependencies
 
-`gcc`, `libx11-dev`, `libxft-dev`, `pkg-config`, `qemu-system-x86`, `arch-install-scripts`, `novnc`, `sshpass`, `zstd` (install script: `install-iso-build-deps.sh`).
+`gcc`, `libx11-dev`, `libxft-dev`, `libxcursor-dev`, `pkg-config`, `qemu-system-x86`, `arch-install-scripts`, `novnc`, `websockify`, `sshpass`, `zstd` — ISO build via `install-iso-build-deps.sh`; GUI via `run-vm-gui.sh`.
 
-### Workflow
+### Workflow (copy-paste)
 
-1. `make -C backroot8/src/br8-wm` and `br8-panel` (zero warnings).
-2. `mkdir -p backroot8/vm && sudo ./scripts/install-iso-build-deps.sh && sudo ./scripts/build-iso.sh`
-3. `./backroot8/scripts/run-vm-gui.sh`
-4. End tasks with noVNC available at port **6080**.
+```bash
+# 1. Binaries (when editing WM/panel)
+make -C backroot8/src/br8-wm && make -C backroot8/src/br8-panel
+
+# 2. ISO (first time or overlay/package changes)
+mkdir -p backroot8/vm && cd backroot8
+sudo ./scripts/install-iso-build-deps.sh
+sudo ./scripts/build-root.sh && sudo ./scripts/build-iso.sh
+cd ..
+
+# 3. Desktop in browser — required before finishing most UI tasks
+./backroot8/scripts/run-vm-gui.sh
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:6080/   # expect 200
+```
 
 ### Gotchas
 
 - QEMU `-vga std` needs Xorg **modesetting**, not vesa (see `rootfs-overlay/etc/X11/xorg.conf.d/10-vesa.conf`).
 - `xinitrc` must be executable in the guest overlay.
 - Guest SSH: `PermitRootLogin yes` in overlay.
-- No KVM in Cloud Agent VMs — TCG is slow but works.
+- No KVM in Cloud Agent VMs — TCG is slow but works; allow several minutes after `run-vm-gui.sh`.
 - Create `backroot8/vm/` before first bootstrap download.
